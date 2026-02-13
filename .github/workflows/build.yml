@@ -1,0 +1,64 @@
+name: Build Electron App
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        os: [macos-latest, ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Set app version from tag
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          npm pkg set version="$VERSION"
+          echo "App version: $VERSION"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build Next.js
+        run: npm run build
+
+      - name: Bundle server for Electron
+        run: npm run electron:bundle
+
+      - name: Package Electron app
+        run: npx electron-forge package
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+
+      - name: Ad-hoc sign macOS app
+        if: runner.os == 'macOS'
+        run: codesign --force --deep --sign - "$(find out -name 'KlustrEye.app' -maxdepth 3 -type d | head -1)"
+
+      - name: Create distributables
+        run: npx electron-forge make --skip-package
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: klustreye-${{ matrix.os }}
+          path: out/make/**/*
+
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: out/make/**/*.zip

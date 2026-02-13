@@ -1,0 +1,68 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Organization {
+  id        String           @id @default(cuid())
+  name      String           @unique
+  sortOrder Int              @default(0)
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
+  clusters  ClusterContext[]
+}
+
+model ClusterContext {
+  id             String           @id @default(cuid())
+  contextName    String           @unique
+  displayName    String?
+  lastNamespace  String           @default("default")
+  pinned         Boolean          @default(false)
+  organizationId String?
+  organization   Organization?    @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+  settings       ClusterSetting[]
+}
+
+model ClusterSetting {
+  id        String         @id @default(cuid())
+  clusterId String
+  key       String
+  value     String
+  cluster   ClusterContext  @relation(fields: [clusterId], references: [id], onDelete: Cascade)
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @updatedAt
+
+  @@unique([clusterId, key])
+}
+
+model UserPreference {
+  id    String @id @default(cuid())
+  key   String @unique
+  value String
+}
+
+model SavedTemplate {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  kind        String
+  yaml        String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model TerminalSession {
+  id            String   @id @default(cuid())
+  contextName   String
+  namespace     String
+  podName       String
+  containerName String
+  label         String?
+  createdAt     DateTime @default(now())
+}

@@ -1,0 +1,31 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(node --version)",
+      "Bash(npm --version:*)",
+      "Bash(npx --version)",
+      "Bash(docker:*)",
+      "Bash(docker compose:*)",
+      "WebSearch",
+      "WebFetch(domain:github.com)",
+      "Bash(npm install:*)",
+      "Bash(npx next build:*)",
+      "Bash(npx tsc:*)",
+      "Bash(npx prisma migrate dev:*)",
+      "Bash(npx prisma migrate reset:*)",
+      "Bash(xargs ls:*)",
+      "Bash(ls:*)",
+      "Bash(node -e:*)",
+      "Bash(node:*)",
+      "Bash(grep:*)",
+      "Bash(git add:*)",
+      "Bash(sips:*)",
+      "Bash(iconutil:*)",
+      "Bash(git remote set-url:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "Bash(npm run build:*)",
+      "Bash(transpile\" error in packaged Electron app \\(no tsx at runtime\\)\n- Add Windows PATH augmentation for Node.js/npm directories to fix\n  npm spawn ENOENT when launched from desktop\n- Add kubeconfig settings API endpoint \\(GET/PUT /api/settings/kubeconfig\\)\n  with UserPreference persistence\n- Extend K8s client to support custom kubeconfig path with lazy DB init\n- Add React Query hook for kubeconfig setting management\n- Update home page with kubeconfig path input in empty state and\n  collapsible settings panel when clusters are loaded\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\nEOF\n\\)\")"
+    ]
+  }
+}
