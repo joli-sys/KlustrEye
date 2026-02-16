@@ -188,6 +188,26 @@ forge.config.ts              # Electron Forge packaging config
 - [GitHub](https://github.com/joli-sys/KlustrEye)
 - [Jiri Olah](https://o-li.cz)
 
+## Contributing
+
+Contributions are welcome! Here's how you can help:
+
+1. **Fork** the repository and create a feature branch from `main`
+2. **Make your changes** — follow the existing code style and patterns (App Router conventions, shadcn/ui components, React Query for server state)
+3. **Test locally** — run `npm run dev` and verify your changes work against a real cluster
+4. **Type-check** — run `npx tsc --noEmit` to ensure there are no TypeScript errors
+5. **Submit a pull request** — describe what you changed and why
+
+Areas where contributions are especially appreciated:
+- Additional Kubernetes resource support
+- Improved metrics and monitoring views
+- Accessibility improvements
+- Bug fixes and performance optimizations
+
+Please open an issue first for large changes or new features so we can discuss the approach.
+
 ## License
 
-ISC
+This project is licensed under the [MIT License](LICENSE).
+
+Copyright (c) 2026 Jiří Oláh
