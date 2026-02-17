@@ -252,6 +252,7 @@ export const SIDEBAR_SECTIONS = [
     items: [
       { label: "Services", href: "network/services", icon: "Network" },
       { label: "Ingresses", href: "network/ingresses", icon: "Globe" },
+      { label: "Network Map", href: "network/map", icon: "Share2" },
       { label: "Port Forwards", href: "network/port-forwards", icon: "Cable" },
     ],
   },

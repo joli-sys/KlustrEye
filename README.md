@@ -57,6 +57,11 @@ A web-based Kubernetes IDE built with Next.js, React, and TypeScript. Connect to
 - **Sidebar integration** — plugins with `hasPage: true` appear automatically under an "Integrations" sidebar section
 - **Grafana plugin** — ships with a built-in Grafana/Mimir plugin for historical Prometheus metrics
 
+### Network
+- **Network Map** — visual topology diagram showing Ingress → Service → Pod relationships using React Flow with auto-layout (dagre), click-to-navigate, and namespace filtering
+- **Traefik IngressRoute support** — automatically discovers Traefik IngressRoute CRDs (`traefik.io` and `traefik.containo.us`) and displays them in the network map with host and match rule details
+- **Service endpoints** — service detail page shows Endpoints with ready/not-ready status, IPs, ports, target pod references (linked to pod detail), and node names
+
 ### Search & Navigation
 - **Command palette** — quick navigation to any page or resource
 - **Global resource search** — search across all resource types in a cluster
@@ -79,6 +84,7 @@ A web-based Kubernetes IDE built with Next.js, React, and TypeScript. Connect to
 | Terminal | xterm.js with WebSocket backend |
 | Tables | TanStack React Table |
 | Charts | Recharts |
+| Network Graph | React Flow (`@xyflow/react`) with dagre auto-layout |
 | Desktop | Electron with Electron Forge |
 
 ## Getting Started
@@ -134,7 +140,7 @@ src/
     clusters/[contextName]/  # Cluster-scoped pages
       overview/              # Cluster overview with metrics
       workloads/             # Pods, Deployments, StatefulSets, etc.
-      network/               # Services, Ingresses
+      network/               # Services, Ingresses, Network Map
       config/                # ConfigMaps, Secrets, ServiceAccounts
       storage/               # PVCs
       helm/                  # Helm releases list + detail
@@ -149,6 +155,7 @@ src/
     cloud-provider-icon.tsx  # EKS/GKE/AKS/K8s SVG icons
     manage-organizations-dialog.tsx
     rename-context-dialog.tsx
+    network-map/             # Network topology diagram (React Flow)
     resource-detail.tsx
     resource-table.tsx
     command-palette.tsx

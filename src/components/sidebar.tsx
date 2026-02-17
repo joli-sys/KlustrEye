@@ -10,7 +10,7 @@ import { ClusterSwitcher } from "@/components/cluster-switcher";
 import {
   LayoutDashboard, Server, Box, Layers, Database, Cpu, Copy, Play, Clock,
   Network, Globe, FileText, KeyRound, UserCog, HardDrive, Activity, Anchor,
-  Puzzle, Cable, PanelLeftClose, PanelLeft, Settings, BarChart3,
+  Puzzle, Cable, Share2, PanelLeftClose, PanelLeft, Settings, BarChart3,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { getPluginsWithPages } from "@/lib/plugins/registry";
@@ -18,7 +18,7 @@ import { getPluginsWithPages } from "@/lib/plugins/registry";
 const iconMap: Record<string, React.ComponentType<{ className?: string }>> = {
   LayoutDashboard, Server, Box, Layers, Database, Cpu, Copy, Play, Clock,
   Network, Globe, FileText, KeyRound, UserCog, HardDrive, Activity, Anchor,
-  Puzzle, Cable, Settings, BarChart3,
+  Puzzle, Cable, Share2, Settings, BarChart3,
 };
 
 const pagePlugins = getPluginsWithPages();
