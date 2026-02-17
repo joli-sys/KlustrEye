@@ -4,6 +4,7 @@ import next from "next";
 import { WebSocketServer } from "ws";
 import { handleTerminalConnection } from "./src/lib/ws/terminal-handler";
 import { cleanupAllPortForwards, markStaleSessionsStopped } from "./src/lib/k8s/port-forward";
+import { ensureDatabase } from "./src/lib/prisma";
 
 export async function startServer(opts: {
   dev: boolean;
@@ -17,6 +18,9 @@ export async function startServer(opts: {
   const handle = app.getRequestHandler();
 
   await app.prepare();
+
+  // Ensure all tables exist (needed for packaged Electron app without Prisma migrations)
+  await ensureDatabase();
 
   // Mark any stale port-forward sessions from previous server instances as stopped
   await markStaleSessionsStopped();
