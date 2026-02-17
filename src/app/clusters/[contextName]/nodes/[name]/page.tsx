@@ -8,7 +8,10 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { statusBadge } from "@/components/resource-table";
 import { parseCpuValue, parseMemoryValue, formatBytes, formatCpu, formatAge } from "@/lib/utils";
+import { getPluginsWithResourceExtension } from "@/lib/plugins/registry";
 import Link from "next/link";
+
+const nodePlugins = getPluginsWithResourceExtension("nodes");
 
 function ResourceBar({ label, used, total, formatFn }: {
   label: string;
@@ -68,8 +71,37 @@ export default function NodeDetailPage({ params }: { params: Promise<{ contextNa
     });
   }, [allPods, name]);
 
+  const pluginTabs = nodePlugins.length > 0
+    ? [
+        {
+          value: "metrics",
+          label: "Metrics",
+          content: (
+            <div className="space-y-6">
+              {nodePlugins.map((p) => {
+                const Extension = p.NodeExtension;
+                if (!Extension) return null;
+                return (
+                  <Extension
+                    key={p.manifest.id}
+                    contextName={ctx}
+                    name={name}
+                  />
+                );
+              })}
+            </div>
+          ),
+        },
+      ]
+    : undefined;
+
   return (
-    <ResourceDetail contextName={ctx} kind="nodes" name={name}>
+    <ResourceDetail
+      contextName={ctx}
+      kind="nodes"
+      name={name}
+      extraTabs={pluginTabs}
+    >
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-4">
         <Card>
           <CardHeader>

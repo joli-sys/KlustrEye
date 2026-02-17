@@ -46,7 +46,16 @@ A web-based Kubernetes IDE built with Next.js, React, and TypeScript. Connect to
 - **Pod logs** — real-time log streaming with search and filtering
 - **Pod terminal** — interactive terminal sessions via xterm.js and WebSocket
 - **Node and pod metrics** — CPU and memory usage from metrics-server
+- **Historical metrics** — Grafana/Mimir integration for historical CPU and memory charts on pod and node detail pages
 - **Events** — cluster-wide and resource-scoped event viewing
+
+### Plugin System
+- **Dynamic plugin architecture** — drop-in plugin directories under `src/plugins/` with auto-discovery
+- **Self-contained plugins** — each plugin bundles its own manifest, server handlers, hooks, components, settings panel, and page
+- **Resource extensions** — plugins can inject UI into pod and node detail pages (e.g. historical metrics tabs)
+- **Catch-all routing** — single API route and page route dispatch to plugin code, no core file edits needed
+- **Sidebar integration** — plugins with `hasPage: true` appear automatically under an "Integrations" sidebar section
+- **Grafana plugin** — ships with a built-in Grafana/Mimir plugin for historical Prometheus metrics
 
 ### Search & Navigation
 - **Command palette** — quick navigation to any page or resource
@@ -147,8 +156,20 @@ src/
   hooks/                     # React Query hooks
   lib/
     k8s/                     # Kubernetes client, resources, Helm, provider detection
+    plugins/                 # Plugin system types and registry
     stores/                  # Zustand stores (UI state, saved searches)
     color-presets.ts         # 16 OKLCH color presets
+  plugins/
+    index.ts                 # Plugin barrel file (single registration point)
+    grafana/                 # Grafana/Mimir plugin
+      manifest.ts            # Plugin metadata
+      server.ts              # API handlers + Grafana client
+      queries.ts             # PromQL query builders
+      hooks.ts               # React Query hooks
+      components.tsx         # Chart components
+      settings-panel.tsx     # Settings UI card
+      resource-extensions.tsx # Pod/node metric extensions
+      page.tsx               # Dedicated plugin page
 prisma/
   schema.prisma              # Database schema
 server.ts                    # Custom Node.js server with WebSocket

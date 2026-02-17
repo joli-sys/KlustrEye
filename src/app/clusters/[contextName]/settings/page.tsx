@@ -8,9 +8,12 @@ import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { useToast } from "@/components/ui/toast";
 import { useClusters } from "@/hooks/use-clusters";
+import { getPlugins } from "@/lib/plugins/registry";
 import { COLOR_PRESETS, DEFAULT_COLOR_SCHEME } from "@/lib/color-presets";
 import { Check } from "lucide-react";
 import { cn } from "@/lib/utils";
+
+const plugins = getPlugins();
 
 export default function SettingsPage({ params }: { params: Promise<{ contextName: string }> }) {
   const { contextName } = use(params);
@@ -23,7 +26,6 @@ export default function SettingsPage({ params }: { params: Promise<{ contextName
   const [selectedColor, setSelectedColor] = useState<string | null>(null);
   const [savingColor, setSavingColor] = useState(false);
 
-  // Initialize selectedColor from cluster data once loaded
   const effectiveColor =
     selectedColor ?? currentCluster?.colorScheme ?? DEFAULT_COLOR_SCHEME;
 
@@ -32,7 +34,6 @@ export default function SettingsPage({ params }: { params: Promise<{ contextName
   const [logTailLines, setLogTailLines] = useState("200");
 
   const handleSave = () => {
-    // In a full implementation, this would persist to the DB via API
     addToast({ title: "Settings saved", variant: "success" });
   };
 
@@ -150,6 +151,12 @@ export default function SettingsPage({ params }: { params: Promise<{ contextName
           </div>
         </CardContent>
       </Card>
+
+      {plugins.map((plugin) => {
+        const Panel = plugin.SettingsPanel;
+        if (!Panel) return null;
+        return <Panel key={plugin.manifest.id} contextName={ctx} />;
+      })}
 
       <Card>
         <CardHeader>

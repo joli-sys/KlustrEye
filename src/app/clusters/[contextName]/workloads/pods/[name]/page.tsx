@@ -13,7 +13,10 @@ import { TerminalPanel } from "@/components/terminal-panel";
 import { PodMetricsChart } from "@/components/pod-metrics-chart";
 import { PortForwardTab } from "@/components/port-forward-tab";
 import { parseCpuValue, parseMemoryValue, formatBytes, formatCpu } from "@/lib/utils";
+import { getPluginsWithResourceExtension } from "@/lib/plugins/registry";
 import Link from "next/link";
+
+const podPlugins = getPluginsWithResourceExtension("pods");
 
 function ResourceRow({ label, used, request, limit, formatFn }: {
   label: string;
@@ -109,11 +112,25 @@ export default function PodDetailPage({ params }: { params: Promise<{ contextNam
           value: "metrics",
           label: "Metrics",
           content: (
-            <PodMetricsChart
-              contextName={ctx}
-              podName={name}
-              namespace={namespace}
-            />
+            <div className="space-y-6">
+              <PodMetricsChart
+                contextName={ctx}
+                podName={name}
+                namespace={namespace}
+              />
+              {podPlugins.map((p) => {
+                const Extension = p.PodExtension;
+                if (!Extension) return null;
+                return (
+                  <Extension
+                    key={p.manifest.id}
+                    contextName={ctx}
+                    name={name}
+                    namespace={namespace}
+                  />
+                );
+              })}
+            </div>
           ),
         },
         {
