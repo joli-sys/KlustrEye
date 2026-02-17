@@ -66,3 +66,18 @@ model TerminalSession {
   label         String?
   createdAt     DateTime @default(now())
 }
+
+model PortForwardSession {
+  id            String    @id @default(cuid())
+  contextName   String
+  namespace     String
+  resourceType  String
+  resourceName  String
+  localPort     Int
+  remotePort    Int
+  status        String    @default("starting")
+  errorMessage  String?
+  pid           Int?
+  createdAt     DateTime  @default(now())
+  stoppedAt     DateTime?
+}

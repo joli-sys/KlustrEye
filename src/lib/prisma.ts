@@ -70,6 +70,21 @@ const SCHEMA_STATEMENTS = [
     "label" TEXT,
     "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
   )`,
+
+  `CREATE TABLE IF NOT EXISTS "PortForwardSession" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "contextName" TEXT NOT NULL,
+    "namespace" TEXT NOT NULL,
+    "resourceType" TEXT NOT NULL,
+    "resourceName" TEXT NOT NULL,
+    "localPort" INTEGER NOT NULL,
+    "remotePort" INTEGER NOT NULL,
+    "status" TEXT NOT NULL DEFAULT 'starting',
+    "errorMessage" TEXT,
+    "pid" INTEGER,
+    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "stoppedAt" DATETIME
+  )`,
 ];
 
 let ensured = false;

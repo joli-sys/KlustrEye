@@ -10,14 +10,14 @@ import { ClusterSwitcher } from "@/components/cluster-switcher";
 import {
   LayoutDashboard, Server, Box, Layers, Database, Cpu, Copy, Play, Clock,
   Network, Globe, FileText, KeyRound, UserCog, HardDrive, Activity, Anchor,
-  Puzzle, PanelLeftClose, PanelLeft, Settings,
+  Puzzle, Cable, PanelLeftClose, PanelLeft, Settings,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 const iconMap: Record<string, React.ComponentType<{ className?: string }>> = {
   LayoutDashboard, Server, Box, Layers, Database, Cpu, Copy, Play, Clock,
   Network, Globe, FileText, KeyRound, UserCog, HardDrive, Activity, Anchor,
-  Puzzle, Settings,
+  Puzzle, Cable, Settings,
 };
 
 export function Sidebar({ contextName }: { contextName: string }) {

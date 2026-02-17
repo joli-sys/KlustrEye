@@ -1,6 +1,7 @@
 "use client";
 
 import { NamespaceSelector } from "@/components/namespace-selector";
+import { PortForwardIndicator } from "@/components/port-forward-indicator";
 import { useClusters } from "@/hooks/use-clusters";
 import { Button } from "@/components/ui/button";
 import { Search } from "lucide-react";
@@ -24,6 +25,7 @@ export function Header({ contextName }: { contextName: string }) {
         <NamespaceSelector contextName={contextName} />
       </div>
       <div className="flex items-center gap-2">
+        <PortForwardIndicator contextName={contextName} />
         <Button
           variant="outline"
           size="sm"

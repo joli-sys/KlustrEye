@@ -3,6 +3,7 @@ import { parse } from "url";
 import next from "next";
 import { WebSocketServer } from "ws";
 import { handleTerminalConnection } from "./src/lib/ws/terminal-handler";
+import { cleanupAllPortForwards, markStaleSessionsStopped } from "./src/lib/k8s/port-forward";
 
 export async function startServer(opts: {
   dev: boolean;
@@ -16,6 +17,9 @@ export async function startServer(opts: {
   const handle = app.getRequestHandler();
 
   await app.prepare();
+
+  // Mark any stale port-forward sessions from previous server instances as stopped
+  await markStaleSessionsStopped();
 
   const server = createServer((req, res) => {
     const parsedUrl = parse(req.url!, true);
@@ -52,6 +56,14 @@ export async function startServer(opts: {
       socket.destroy();
     }
   });
+
+  const shutdown = async () => {
+    await cleanupAllPortForwards();
+    server.close();
+    process.exit(0);
+  };
+  process.on("SIGTERM", shutdown);
+  process.on("SIGINT", shutdown);
 
   return new Promise((resolve) => {
     server.listen(port, () => {

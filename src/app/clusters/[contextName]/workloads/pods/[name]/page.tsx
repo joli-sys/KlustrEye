@@ -11,6 +11,7 @@ import { statusBadge } from "@/components/resource-table";
 import { LogViewer } from "@/components/log-viewer";
 import { TerminalPanel } from "@/components/terminal-panel";
 import { PodMetricsChart } from "@/components/pod-metrics-chart";
+import { PortForwardTab } from "@/components/port-forward-tab";
 import { parseCpuValue, parseMemoryValue, formatBytes, formatCpu } from "@/lib/utils";
 import Link from "next/link";
 
@@ -59,6 +60,19 @@ export default function PodDetailPage({ params }: { params: Promise<{ contextNam
   const status = (data?.status as Record<string, unknown>) || {};
   const containers = (spec.containers as Record<string, unknown>[]) || [];
   const containerStatuses = (status.containerStatuses as Record<string, unknown>[]) || [];
+
+  const containerPorts = useMemo(() => {
+    const ports: { name?: string; port: number; protocol?: string }[] = [];
+    for (const c of containers) {
+      const cPorts = c.ports as { name?: string; containerPort: number; protocol?: string }[] | undefined;
+      if (cPorts) {
+        for (const p of cPorts) {
+          ports.push({ name: p.name, port: p.containerPort, protocol: p.protocol });
+        }
+      }
+    }
+    return ports;
+  }, [containers]);
 
   const containerMetrics = useMemo(() => {
     const map = new Map<string, { cpu: number; memory: number }>();
@@ -123,6 +137,19 @@ export default function PodDetailPage({ params }: { params: Promise<{ contextNam
               namespace={namespace}
               podName={name}
               containers={containers.map((c) => c.name as string)}
+            />
+          ),
+        },
+        {
+          value: "port-forward",
+          label: "Port Forward",
+          content: (
+            <PortForwardTab
+              contextName={ctx}
+              namespace={namespace}
+              resourceType="pod"
+              resourceName={name}
+              ports={containerPorts}
             />
           ),
         },

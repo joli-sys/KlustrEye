@@ -177,14 +177,12 @@ export function ResourceDetail({
             )}
           </div>
           {children}
-          {entry.namespaced && (
-            <RelatedEvents
-              contextName={contextName}
-              kind={kind}
-              name={name}
-              namespace={namespace}
-            />
-          )}
+          <RelatedEvents
+            contextName={contextName}
+            kind={kind}
+            name={name}
+            namespace={namespace}
+          />
         </TabsContent>
 
         <TabsContent value="yaml">
