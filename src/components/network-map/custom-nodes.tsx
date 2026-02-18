@@ -8,7 +8,9 @@ function StatusDot({ status }: { status?: string }) {
   let color = "bg-red-500";
   if (status === "Running") color = "bg-green-500";
   else if (status === "Succeeded") color = "bg-blue-500";
-  else if (status === "Pending" || status === "NotReady") color = "bg-yellow-500";
+  else if (status === "Terminating") color = "bg-purple-500";
+  else if (status === "Pending" || status === "NotReady" || status?.startsWith("Init:"))
+    color = "bg-yellow-500";
 
   return (
     <span className={`inline-block h-2 w-2 rounded-full ${color}`} title={status} />

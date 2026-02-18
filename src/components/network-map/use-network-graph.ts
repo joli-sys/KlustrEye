@@ -370,7 +370,18 @@ export function useNetworkGraph(contextName: string) {
 function derivePodStatus(pod: K8sResource): string {
   const phase = pod.status?.phase ?? "Unknown";
 
-  // Check container statuses for waiting states (CrashLoopBackOff, ImagePullBackOff, etc.)
+  // Pod with deletionTimestamp is Terminating (not a real phase, but kubectl shows it)
+  if (pod.metadata?.deletionTimestamp) return "Terminating";
+
+  // Check init container statuses for waiting states
+  const initStatuses: ContainerStatus[] = pod.status?.initContainerStatuses ?? [];
+  for (const cs of initStatuses) {
+    if (cs.state?.waiting?.reason) return `Init:${cs.state.waiting.reason}`;
+    if (cs.state?.terminated && cs.state.terminated.reason !== "Completed")
+      return `Init:${cs.state.terminated.reason ?? "Error"}`;
+  }
+
+  // Check container statuses for waiting/terminated states
   const containerStatuses: ContainerStatus[] = pod.status?.containerStatuses ?? [];
   for (const cs of containerStatuses) {
     if (cs.state?.waiting?.reason) return cs.state.waiting.reason;
@@ -395,6 +406,7 @@ interface K8sResource {
     namespace?: string;
     labels?: Record<string, string>;
     ownerReferences?: { kind: string; name: string }[];
+    deletionTimestamp?: string;
   };
   spec?: any;
   status?: any;
