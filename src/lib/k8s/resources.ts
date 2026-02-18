@@ -5,6 +5,8 @@ import {
   getAppsApi,
   getBatchApi,
   getNetworkingApi,
+  getPolicyApi,
+  getAutoscalingApi,
   getKubeConfig,
   withTimeout,
 } from "./client";
@@ -17,6 +19,8 @@ function getApiClient(contextName: string, kind: ResourceKind) {
   if (entry.apiVersion === "apps/v1") return getAppsApi(contextName);
   if (entry.apiVersion === "batch/v1") return getBatchApi(contextName);
   if (entry.apiVersion === "networking.k8s.io/v1") return getNetworkingApi(contextName);
+  if (entry.apiVersion === "policy/v1") return getPolicyApi(contextName);
+  if (entry.apiVersion === "autoscaling/v2") return getAutoscalingApi(contextName);
   throw new Error(`Unsupported apiVersion: ${entry.apiVersion}`);
 }
 

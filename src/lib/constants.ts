@@ -14,6 +14,8 @@ export type ResourceKind =
   | "nodes"
   | "namespaces"
   | "serviceaccounts"
+  | "poddisruptionbudgets"
+  | "horizontalpodautoscalers"
   | "events";
 
 export interface ResourceRegistryEntry {
@@ -178,6 +180,26 @@ export const RESOURCE_REGISTRY: Record<ResourceKind, ResourceRegistryEntry> = {
     labelPlural: "Namespaces",
     listFn: "listNamespace",
   },
+  poddisruptionbudgets: {
+    kind: "PodDisruptionBudget",
+    apiVersion: "policy/v1",
+    plural: "poddisruptionbudgets",
+    namespaced: true,
+    group: "workloads",
+    label: "PodDisruptionBudget",
+    labelPlural: "PodDisruptionBudgets",
+    listFn: "listNamespacedPodDisruptionBudget",
+  },
+  horizontalpodautoscalers: {
+    kind: "HorizontalPodAutoscaler",
+    apiVersion: "autoscaling/v2",
+    plural: "horizontalpodautoscalers",
+    namespaced: true,
+    group: "workloads",
+    label: "HorizontalPodAutoscaler",
+    labelPlural: "HorizontalPodAutoscalers",
+    listFn: "listNamespacedHorizontalPodAutoscaler",
+  },
   events: {
     kind: "Event",
     apiVersion: "v1",
@@ -207,6 +229,8 @@ export const RESOURCE_ROUTE_MAP: Record<
   secrets: { path: "config/secrets", hasDetail: true },
   persistentvolumeclaims: { path: "storage/persistentvolumeclaims", hasDetail: true },
   serviceaccounts: { path: "config/serviceaccounts", hasDetail: true },
+  poddisruptionbudgets: { path: "workloads/poddisruptionbudgets", hasDetail: true },
+  horizontalpodautoscalers: { path: "workloads/hpa", hasDetail: true },
   nodes: { path: "nodes", hasDetail: true },
   namespaces: { path: "namespaces", hasDetail: false },
   events: { path: "events", hasDetail: false },
@@ -245,6 +269,9 @@ export const SIDEBAR_SECTIONS = [
       { label: "ReplicaSets", href: "workloads/replicasets", icon: "Copy" },
       { label: "Jobs", href: "workloads/jobs", icon: "Play" },
       { label: "CronJobs", href: "workloads/cronjobs", icon: "Clock" },
+      { label: "PDB", href: "workloads/poddisruptionbudgets", icon: "ShieldCheck" },
+      { label: "HPA", href: "workloads/hpa", icon: "ArrowUpDown" },
+      { label: "VPA", href: "workloads/vpa", icon: "SlidersHorizontal" },
     ],
   },
   {

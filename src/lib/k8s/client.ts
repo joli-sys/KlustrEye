@@ -123,6 +123,16 @@ export function getNetworkingApi(contextName: string): k8s.NetworkingV1Api {
   return kc.makeApiClient(k8s.NetworkingV1Api);
 }
 
+export function getAutoscalingApi(contextName: string): k8s.AutoscalingV2Api {
+  const kc = getKubeConfig(contextName);
+  return kc.makeApiClient(k8s.AutoscalingV2Api);
+}
+
+export function getPolicyApi(contextName: string): k8s.PolicyV1Api {
+  const kc = getKubeConfig(contextName);
+  return kc.makeApiClient(k8s.PolicyV1Api);
+}
+
 export function getRbacApi(contextName: string): k8s.RbacAuthorizationV1Api {
   const kc = getKubeConfig(contextName);
   return kc.makeApiClient(k8s.RbacAuthorizationV1Api);

@@ -200,6 +200,19 @@ export default function PodDetailPage({ params }: { params: Promise<{ contextNam
               <span className="font-mono text-xs">{status.podIP as string || "-"}</span>
             </div>
             <div className="flex justify-between">
+              <span className="text-muted-foreground">Service Account</span>
+              {spec.serviceAccountName ? (
+                <Link
+                  href={`/clusters/${encodeURIComponent(ctx)}/config/serviceaccounts/${encodeURIComponent(spec.serviceAccountName as string)}?ns=${encodeURIComponent(namespace)}`}
+                  className="text-primary hover:underline font-mono text-xs"
+                >
+                  {spec.serviceAccountName as string}
+                </Link>
+              ) : (
+                <span className="font-mono text-xs">-</span>
+              )}
+            </div>
+            <div className="flex justify-between">
               <span className="text-muted-foreground">QoS Class</span>
               <span>{status.qosClass as string || "-"}</span>
             </div>

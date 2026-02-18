@@ -346,7 +346,7 @@ export function useNetworkGraph(contextName: string) {
           label: podName,
           kind: "Pod",
           namespace: podNs,
-          status: pod.status?.phase ?? "Unknown",
+          status: derivePodStatus(pod),
           owner,
           resourceName: podName,
         },
@@ -365,6 +365,26 @@ export function useNetworkGraph(contextName: string) {
   ]);
 
   return { nodes, edges, isLoading };
+}
+
+function derivePodStatus(pod: K8sResource): string {
+  const phase = pod.status?.phase ?? "Unknown";
+
+  // Check container statuses for waiting states (CrashLoopBackOff, ImagePullBackOff, etc.)
+  const containerStatuses: ContainerStatus[] = pod.status?.containerStatuses ?? [];
+  for (const cs of containerStatuses) {
+    if (cs.state?.waiting?.reason) return cs.state.waiting.reason;
+    if (cs.state?.terminated?.reason) return cs.state.terminated.reason;
+  }
+
+  // Pod is Running but check if it's actually Ready
+  if (phase === "Running") {
+    const conditions: PodCondition[] = pod.status?.conditions ?? [];
+    const readyCond = conditions.find((c) => c.type === "Ready");
+    if (readyCond && readyCond.status !== "True") return "NotReady";
+  }
+
+  return phase;
 }
 
 // Minimal type helpers for K8s resource shapes
@@ -403,4 +423,16 @@ interface TraefikRoute {
 interface TraefikRouteService {
   name?: string;
   port?: number | string;
+}
+
+interface PodCondition {
+  type: string;
+  status: string;
+}
+
+interface ContainerStatus {
+  state?: {
+    waiting?: { reason?: string };
+    terminated?: { reason?: string };
+  };
 }

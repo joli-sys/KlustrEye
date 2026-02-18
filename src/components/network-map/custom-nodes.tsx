@@ -5,15 +5,14 @@ import { Globe, Network, Box, Route } from "lucide-react";
 import type { NetworkNodeData } from "./use-network-graph";
 
 function StatusDot({ status }: { status?: string }) {
-  const color =
-    status === "Running"
-      ? "bg-green-500"
-      : status === "Pending"
-        ? "bg-yellow-500"
-        : status === "Succeeded"
-          ? "bg-blue-500"
-          : "bg-red-500";
-  return <span className={`inline-block h-2 w-2 rounded-full ${color}`} />;
+  let color = "bg-red-500";
+  if (status === "Running") color = "bg-green-500";
+  else if (status === "Succeeded") color = "bg-blue-500";
+  else if (status === "Pending" || status === "NotReady") color = "bg-yellow-500";
+
+  return (
+    <span className={`inline-block h-2 w-2 rounded-full ${color}`} title={status} />
+  );
 }
 
 export function IngressNode({ data }: { data: NetworkNodeData }) {
@@ -109,6 +108,9 @@ export function PodNode({ data }: { data: NetworkNodeData }) {
         <span className="text-[10px] text-muted-foreground">{data.namespace}</span>
         {data.owner && (
           <span className="text-[10px] text-muted-foreground truncate max-w-[100px]">{data.owner}</span>
+        )}
+        {data.status && data.status !== "Running" && (
+          <span className="text-[9px] text-yellow-400 truncate">{data.status}</span>
         )}
       </div>
     </div>
