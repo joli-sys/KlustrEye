@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Badge } from "@/components/ui/badge";
 import { formatAge } from "@/lib/utils";
@@ -71,8 +72,8 @@ export function RelatedEvents({ contextName, kind, name, namespace }: RelatedEve
                   </Badge>
                 </td>
                 <td className="p-2 font-medium">{event.reason as string}</td>
-                <td className="p-2 text-muted-foreground max-w-md truncate">
-                  {event.message as string}
+                <td className="p-2 text-muted-foreground max-w-md">
+                  <ExpandableMessage message={event.message as string} />
                 </td>
                 <td className="p-2">{(event.count as number) || 1}</td>
                 <td className="p-2 text-muted-foreground">
@@ -84,5 +85,21 @@ export function RelatedEvents({ contextName, kind, name, namespace }: RelatedEve
         </tbody>
       </table>
     </div>
+  );
+}
+
+function ExpandableMessage({ message }: { message: string }) {
+  const [expanded, setExpanded] = useState(false);
+
+  if (!message) return <span>-</span>;
+
+  return (
+    <button
+      type="button"
+      onClick={() => setExpanded((prev) => !prev)}
+      className={`text-left ${expanded ? "whitespace-pre-wrap break-all" : "truncate block max-w-md"}`}
+    >
+      {message}
+    </button>
   );
 }

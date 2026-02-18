@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useRef, useEffect } from "react";
+import { useState, useMemo, useRef, useEffect, useCallback } from "react";
 import {
   useReactTable,
   getCoreRowModel,
@@ -12,7 +12,7 @@ import {
   type RowSelectionState,
   type FilterFn,
 } from "@tanstack/react-table";
-import { useSearchParams } from "next/navigation";
+import { useSearchParams, usePathname, useRouter } from "next/navigation";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -21,6 +21,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { ArrowUpDown, MoreHorizontal, Trash2, Edit, Terminal, FileText, Star } from "lucide-react";
 import { formatAge } from "@/lib/utils";
 import { useSavedSearches } from "@/lib/stores/saved-searches-store";
+import { useTabStore } from "@/lib/stores/tab-store";
 import Link from "next/link";
 
 const globalFilterFn: FilterFn<Record<string, unknown>> = (row, _columnId, filterValue) => {
@@ -90,11 +91,36 @@ export function ResourceTable({
   resourceKind,
 }: ResourceTableProps) {
   const searchParams = useSearchParams();
+  const pathname = usePathname();
+  const router = useRouter();
+  const { openTab } = useTabStore();
+
+  // Derive cluster context from pathname: /clusters/<contextName>/...
+  const contextName = (() => {
+    const parts = pathname.split("/");
+    const idx = parts.indexOf("clusters");
+    return idx !== -1 && parts[idx + 1] ? decodeURIComponent(parts[idx + 1]) : "";
+  })();
   const [sorting, setSorting] = useState<SortingState>([]);
   const [globalFilter, setGlobalFilter] = useState(() => searchParams.get("filter") || "");
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const filterInputRef = useRef<HTMLInputElement>(null);
   const { searches, addSearch, removeSearch } = useSavedSearches();
+
+  const handleFilterChange = useCallback(
+    (value: string) => {
+      setGlobalFilter(value);
+      const params = new URLSearchParams(searchParams.toString());
+      if (value) {
+        params.set("filter", value);
+      } else {
+        params.delete("filter");
+      }
+      const qs = params.toString();
+      router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
+    },
+    [pathname, router, searchParams]
+  );
 
   const savedMatch = useMemo(() => {
     if (!globalFilter || !resourceKind) return null;
@@ -232,7 +258,7 @@ export function ResourceTable({
             ref={filterInputRef}
             placeholder={`Filter ${kind}...`}
             value={globalFilter}
-            onChange={(e) => setGlobalFilter(e.target.value)}
+            onChange={(e) => handleFilterChange(e.target.value)}
             className="pr-8"
           />
           {!globalFilter && (
@@ -306,7 +332,26 @@ export function ResourceTable({
                 {row.getVisibleCells().map((cell) => (
                   <td key={cell.id} className="px-4 py-2.5">
                     {cell.column.id === "name" && detailLinkFn ? (
-                      <Link href={detailLinkFn(row.original)} className="text-primary hover:underline">
+                      <Link
+                        href={detailLinkFn(row.original)}
+                        className="text-primary hover:underline"
+                        onClick={(e) => {
+                          if (e.ctrlKey || e.metaKey || e.button === 1) {
+                            e.preventDefault();
+                            const href = detailLinkFn(row.original);
+                            const name = (row.original.metadata as Record<string, unknown>)?.name as string || "Detail";
+                            openTab(contextName, href, name);
+                          }
+                        }}
+                        onAuxClick={(e) => {
+                          if (e.button === 1) {
+                            e.preventDefault();
+                            const href = detailLinkFn(row.original);
+                            const name = (row.original.metadata as Record<string, unknown>)?.name as string || "Detail";
+                            openTab(contextName, href, name);
+                          }
+                        }}
+                      >
                         {flexRender(cell.column.columnDef.cell, cell.getContext())}
                       </Link>
                     ) : (

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { useUIStore } from "@/lib/stores/ui-store";
+import { useTabStore } from "@/lib/stores/tab-store";
 import { SIDEBAR_SECTIONS } from "@/lib/constants";
 import { KlustrEyeLogo } from "@/components/klustreye-logo";
 import { ClusterSwitcher } from "@/components/cluster-switcher";
@@ -27,6 +28,7 @@ const pagePlugins = getPluginsWithPages();
 export function Sidebar({ contextName }: { contextName: string }) {
   const pathname = usePathname();
   const { sidebarOpen, toggleSidebar } = useUIStore();
+  const { openTab } = useTabStore();
   const basePath = `/clusters/${encodeURIComponent(contextName)}`;
 
   return (
@@ -68,6 +70,18 @@ export function Sidebar({ contextName }: { contextName: string }) {
                 <Link
                   key={item.href}
                   href={href}
+                  onClick={(e) => {
+                    if (e.ctrlKey || e.metaKey || e.button === 1) {
+                      e.preventDefault();
+                      openTab(contextName, href, item.label);
+                    }
+                  }}
+                  onAuxClick={(e) => {
+                    if (e.button === 1) {
+                      e.preventDefault();
+                      openTab(contextName, href, item.label);
+                    }
+                  }}
                   className={cn(
                     "flex items-center gap-3 px-3 py-1.5 mx-1 rounded-md text-sm transition-colors",
                     isActive
@@ -99,6 +113,18 @@ export function Sidebar({ contextName }: { contextName: string }) {
                 <Link
                   key={plugin.manifest.id}
                   href={href}
+                  onClick={(e) => {
+                    if (e.ctrlKey || e.metaKey || e.button === 1) {
+                      e.preventDefault();
+                      openTab(contextName, href, plugin.manifest.name);
+                    }
+                  }}
+                  onAuxClick={(e) => {
+                    if (e.button === 1) {
+                      e.preventDefault();
+                      openTab(contextName, href, plugin.manifest.name);
+                    }
+                  }}
                   className={cn(
                     "flex items-center gap-3 px-3 py-1.5 mx-1 rounded-md text-sm transition-colors",
                     isActive

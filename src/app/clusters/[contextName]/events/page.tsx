@@ -1,11 +1,25 @@
 "use client";
 
-import { use } from "react";
+import { use, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useUIStore } from "@/lib/stores/ui-store";
 import { ResourceTable, nameColumn, namespaceColumn, ageColumn } from "@/components/resource-table";
 import { Badge } from "@/components/ui/badge";
 import type { ColumnDef } from "@tanstack/react-table";
+
+function ExpandableCell({ value }: { value: string }) {
+  const [expanded, setExpanded] = useState(false);
+  if (!value) return <span>-</span>;
+  return (
+    <button
+      type="button"
+      onClick={() => setExpanded((prev) => !prev)}
+      className={`text-left text-muted-foreground ${expanded ? "whitespace-pre-wrap break-all" : "truncate block max-w-md"}`}
+    >
+      {value}
+    </button>
+  );
+}
 
 const columns: ColumnDef<Record<string, unknown>>[] = [
   {
@@ -39,11 +53,7 @@ const columns: ColumnDef<Record<string, unknown>>[] = [
     id: "message",
     header: "Message",
     accessorFn: (row) => row.message,
-    cell: ({ getValue }) => (
-      <span className="text-muted-foreground truncate max-w-md block">
-        {getValue() as string}
-      </span>
-    ),
+    cell: ({ getValue }) => <ExpandableCell value={getValue() as string} />,
   },
   namespaceColumn(),
   {

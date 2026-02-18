@@ -47,7 +47,7 @@ A web-based Kubernetes IDE built with Next.js, React, and TypeScript. Connect to
 - **Pod terminal** — interactive terminal sessions via xterm.js and WebSocket
 - **Node and pod metrics** — CPU and memory usage from metrics-server
 - **Historical metrics** — Grafana/Mimir integration for historical CPU and memory charts on pod and node detail pages
-- **Events** — cluster-wide and resource-scoped event viewing
+- **Events** — cluster-wide and resource-scoped event viewing with expandable messages (click to show full text)
 
 ### Plugin System
 - **Dynamic plugin architecture** — drop-in plugin directories under `src/plugins/` with auto-discovery
@@ -63,6 +63,9 @@ A web-based Kubernetes IDE built with Next.js, React, and TypeScript. Connect to
 - **Service endpoints** — service detail page shows Endpoints with ready/not-ready status, IPs, ports, target pod references (linked to pod detail), and node names
 
 ### Search & Navigation
+- **Browser-style tabs** — Ctrl/Cmd+click or middle-click any link to open in a new tab; tab bar appears automatically with 2+ tabs, hidden otherwise; tabs persist across sessions per cluster via localStorage
+- **URL-synced filters** — resource table filter is stored in the `?filter=` URL parameter, so it survives tab switches and back navigation
+- **Deterministic back navigation** — back button navigates to the computed parent list URL (preserving filters) instead of unpredictable browser history
 - **Command palette** — quick navigation to any page or resource
 - **Global resource search** — search across all resource types in a cluster
 - **Favorite searches** — save frequently used filter queries and access them from the command palette
@@ -164,7 +167,7 @@ src/
   lib/
     k8s/                     # Kubernetes client, resources, Helm, provider detection
     plugins/                 # Plugin system types and registry
-    stores/                  # Zustand stores (UI state, saved searches)
+    stores/                  # Zustand stores (UI state, saved searches, tabs)
     color-presets.ts         # 16 OKLCH color presets
   plugins/
     index.ts                 # Plugin barrel file (single registration point)

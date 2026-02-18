@@ -15,7 +15,7 @@ import { RESOURCE_REGISTRY } from "@/lib/constants";
 import { stringify, parse } from "yaml";
 import { RelatedEvents } from "@/components/related-events";
 import { Save, Trash2, ArrowLeft } from "lucide-react";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname, useSearchParams } from "next/navigation";
 
 interface ResourceDetailProps {
   contextName: string;
@@ -39,6 +39,18 @@ export function ResourceDetail({
   const deleteMutation = useDeleteResource(contextName, kind);
   const { addToast } = useToast();
   const router = useRouter();
+  const currentPathname = usePathname();
+  const currentSearchParams = useSearchParams();
+
+  // Compute parent list URL by stripping the last path segment (resource name)
+  const parentUrl = (() => {
+    const segments = currentPathname.split("/");
+    segments.pop(); // remove the [name] segment
+    const parentPath = segments.join("/");
+    // Preserve filter param if present
+    const filter = currentSearchParams.get("filter");
+    return filter ? `${parentPath}?filter=${encodeURIComponent(filter)}` : parentPath;
+  })();
   const [tab, setTab] = useState("info");
   const [editedYaml, setEditedYaml] = useState<string | null>(null);
   const entry = RESOURCE_REGISTRY[kind];
@@ -63,7 +75,7 @@ export function ResourceDetail({
     try {
       await deleteMutation.mutateAsync({ name, namespace });
       addToast({ title: `Deleted ${entry.label}`, description: name, variant: "success" });
-      router.back();
+      router.push(parentUrl);
     } catch (err) {
       addToast({ title: "Delete failed", description: (err as Error).message, variant: "destructive" });
     }
@@ -90,7 +102,7 @@ export function ResourceDetail({
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <Button variant="ghost" size="icon" onClick={() => router.back()}>
+          <Button variant="ghost" size="icon" onClick={() => router.push(parentUrl)}>
             <ArrowLeft className="h-4 w-4" />
           </Button>
           <div>

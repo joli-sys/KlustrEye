@@ -1,5 +1,6 @@
 import { Sidebar } from "@/components/sidebar";
 import { Header } from "@/components/header";
+import { TabBar } from "@/components/tab-bar";
 import { ClusterColorProvider } from "@/components/cluster-color-provider";
 
 export default async function ClusterLayout({
@@ -18,6 +19,7 @@ export default async function ClusterLayout({
         <Sidebar contextName={decodedContext} />
         <div className="flex flex-col flex-1 overflow-hidden">
           <Header contextName={decodedContext} />
+          <TabBar contextName={decodedContext} />
           <main className="flex-1 overflow-auto p-4">{children}</main>
         </div>
       </div>
