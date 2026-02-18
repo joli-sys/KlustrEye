@@ -62,7 +62,17 @@ export default function PodDetailPage({ params }: { params: Promise<{ contextNam
   const spec = (data?.spec as Record<string, unknown>) || {};
   const status = (data?.status as Record<string, unknown>) || {};
   const containers = (spec.containers as Record<string, unknown>[]) || [];
+  const initContainers = (spec.initContainers as Record<string, unknown>[]) || [];
   const containerStatuses = (status.containerStatuses as Record<string, unknown>[]) || [];
+  const initContainerStatuses = (status.initContainerStatuses as Record<string, unknown>[]) || [];
+  const volumes = (spec.volumes as Record<string, unknown>[]) || [];
+
+  const pvcVolumes = useMemo(() => {
+    return volumes.filter((v) => v.persistentVolumeClaim).map((v) => ({
+      name: v.name as string,
+      claimName: (v.persistentVolumeClaim as Record<string, unknown>).claimName as string,
+    }));
+  }, [volumes]);
 
   const containerPorts = useMemo(() => {
     const ports: { name?: string; port: number; protocol?: string }[] = [];
@@ -141,7 +151,10 @@ export default function PodDetailPage({ params }: { params: Promise<{ contextNam
               contextName={ctx}
               namespace={namespace}
               podName={name}
-              containers={containers.map((c) => c.name as string)}
+              containers={[
+                ...initContainers.map((c) => c.name as string),
+                ...containers.map((c) => c.name as string),
+              ]}
             />
           ),
         },
@@ -225,6 +238,52 @@ export default function PodDetailPage({ params }: { params: Promise<{ contextNam
           </CardHeader>
           <CardContent>
             <div className="space-y-3">
+              {initContainers.length > 0 && (
+                <>
+                  <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                    Init Containers
+                  </div>
+                  {initContainers.map((container) => {
+                    const cName = container.name as string;
+                    const cs = initContainerStatuses.find((s) => s.name === cName);
+                    const stateObj = cs?.state as Record<string, unknown> | undefined;
+                    const terminated = stateObj?.terminated as Record<string, unknown> | undefined;
+                    const running = stateObj?.running as Record<string, unknown> | undefined;
+                    const statusLabel = terminated
+                      ? terminated.reason as string || "Completed"
+                      : running
+                      ? "Running"
+                      : "Waiting";
+                    const isOk = terminated?.exitCode === 0 || !!running;
+                    const restarts = (cs?.restartCount as number) || 0;
+
+                    return (
+                      <div key={cName} className="p-3 rounded-lg border space-y-2">
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <span className="font-medium text-sm">{cName}</span>
+                            <Badge variant="outline" className="ml-2 text-[10px]">init</Badge>
+                            <p className="text-xs text-muted-foreground">{container.image as string}</p>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            {restarts > 0 && (
+                              <Badge variant="outline" className="text-xs">
+                                {restarts} restarts
+                              </Badge>
+                            )}
+                            <Badge variant={isOk ? "success" : "warning"}>
+                              {statusLabel}
+                            </Badge>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                  <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wider pt-2">
+                    App Containers
+                  </div>
+                </>
+              )}
               {containers.map((container) => {
                 const cName = container.name as string;
                 const cs = containerStatuses.find((s) => s.name === cName);
@@ -275,6 +334,31 @@ export default function PodDetailPage({ params }: { params: Promise<{ contextNam
             </div>
           </CardContent>
         </Card>
+
+        {pvcVolumes.length > 0 && (
+          <Card className="lg:col-span-2">
+            <CardHeader>
+              <CardTitle className="text-base">Persistent Volumes</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-2">
+                {pvcVolumes.map((v) => (
+                  <div key={v.name} className="flex items-center justify-between p-2 rounded-md border">
+                    <div>
+                      <span className="text-sm text-muted-foreground">{v.name}</span>
+                    </div>
+                    <Link
+                      href={`/clusters/${encodeURIComponent(ctx)}/storage/persistentvolumeclaims/${encodeURIComponent(v.claimName)}?ns=${encodeURIComponent(namespace)}`}
+                      className="text-primary hover:underline text-sm font-medium"
+                    >
+                      {v.claimName}
+                    </Link>
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        )}
       </div>
     </ResourceDetail>
   );
