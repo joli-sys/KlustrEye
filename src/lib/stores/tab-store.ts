@@ -91,8 +91,12 @@ export const useTabStore = create<TabState>()(
       updateActiveTab: (cluster, href, title) =>
         set((state) => {
           const activeId = state.activeTabIdByCluster[cluster];
-          if (!activeId) return {};
-          const tabs = (state.tabsByCluster[cluster] || []).map((t) =>
+          if (!activeId) return state;
+          const currentTabs = state.tabsByCluster[cluster] || [];
+          const active = currentTabs.find((t) => t.id === activeId);
+          // Bail out if nothing changed — prevents re-render loops
+          if (active && active.href === href && active.title === title) return state;
+          const tabs = currentTabs.map((t) =>
             t.id === activeId ? { ...t, href, title } : t
           );
           return {

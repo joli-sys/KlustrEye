@@ -47,8 +47,8 @@ export function TabBar({ contextName }: { contextName: string }) {
   const router = useRouter();
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  const tabs = useTabStore((s) => s.getTabs(contextName));
-  const activeTabId = useTabStore((s) => s.getActiveTabId(contextName));
+  const tabs = useTabStore((s) => s.tabsByCluster[contextName]);
+  const activeTabId = useTabStore((s) => s.activeTabIdByCluster[contextName] ?? null);
   const { updateActiveTab, setActiveTab, closeTab } = useTabStore();
 
   // Auto-sync: when URL changes, update the active tab's href/title
@@ -67,7 +67,7 @@ export function TabBar({ contextName }: { contextName: string }) {
   }, [activeTabId]);
 
   // Hide when ≤1 tabs
-  if (tabs.length <= 1) return null;
+  if (!tabs || tabs.length <= 1) return null;
 
   return (
     <div
@@ -101,8 +101,9 @@ export function TabBar({ contextName }: { contextName: string }) {
                 closeTab(contextName, tab.id);
                 if (wasActive) {
                   // Navigate to the now-active tab
-                  const updatedTabs = useTabStore.getState().getTabs(contextName);
-                  const newActiveId = useTabStore.getState().getActiveTabId(contextName);
+                  const state = useTabStore.getState();
+                  const updatedTabs = state.tabsByCluster[contextName] || [];
+                  const newActiveId = state.activeTabIdByCluster[contextName];
                   const newActive = updatedTabs.find((t) => t.id === newActiveId);
                   if (newActive) router.push(newActive.href);
                 }
