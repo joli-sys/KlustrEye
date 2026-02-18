@@ -1,5 +1,7 @@
 import { NextRequest } from "next/server";
-import { getCoreApi } from "@/lib/k8s/client";
+import * as k8s from "@kubernetes/client-node";
+import { getCoreApi, getKubeConfig } from "@/lib/k8s/client";
+import { Writable } from "stream";
 
 export async function GET(
   req: NextRequest,
@@ -7,19 +9,18 @@ export async function GET(
 ) {
   const { contextName, name } = await params;
   const namespace = req.nextUrl.searchParams.get("namespace") || "default";
-  const container = req.nextUrl.searchParams.get("container") || undefined;
+  const containerParam = req.nextUrl.searchParams.get("container") || "";
   const follow = req.nextUrl.searchParams.get("follow") === "true";
   const tailLines = parseInt(req.nextUrl.searchParams.get("tailLines") || "200");
   const previous = req.nextUrl.searchParams.get("previous") === "true";
 
   if (!follow) {
-    // Return logs as plain text
     try {
       const api = getCoreApi(contextName);
       const result = await api.readNamespacedPodLog({
         name,
         namespace,
-        container,
+        container: containerParam || undefined,
         tailLines,
         previous,
       });
@@ -35,62 +36,67 @@ export async function GET(
     }
   }
 
-  // SSE streaming
+  // True streaming via k8s.Log
   const encoder = new TextEncoder();
   const stream = new ReadableStream({
-    async start(controller) {
-      try {
-        const api = getCoreApi(contextName);
-        const result = await api.readNamespacedPodLog({
-          name,
-          namespace,
-          container,
+    start(controller) {
+      const kc = getKubeConfig(contextName);
+      const log = new k8s.Log(kc);
+
+      // Create a writable stream that forwards chunks as SSE
+      const output = new Writable({
+        write(chunk: Buffer, _encoding, callback) {
+          try {
+            const text = chunk.toString("utf-8");
+            controller.enqueue(encoder.encode(`data: ${JSON.stringify({ line: text })}\n\n`));
+            callback();
+          } catch {
+            callback();
+          }
+        },
+      });
+
+      const heartbeat = setInterval(() => {
+        try {
+          controller.enqueue(encoder.encode(": heartbeat\n\n"));
+        } catch {
+          clearInterval(heartbeat);
+        }
+      }, 15000);
+
+      log
+        .log(namespace, name, containerParam, output, {
           follow: true,
           tailLines,
           previous,
-        });
-
-        controller.enqueue(encoder.encode(`data: ${JSON.stringify({ logs: result })}\n\n`));
-
-        const heartbeat = setInterval(() => {
-          try {
-            controller.enqueue(encoder.encode(": heartbeat\n\n"));
-          } catch {
+        })
+        .then((ws) => {
+          // ws is the request object — abort on client disconnect
+          req.signal.addEventListener("abort", () => {
             clearInterval(heartbeat);
-          }
-        }, 15000);
-
-        let lastLog = result;
-        const poll = setInterval(async () => {
-          try {
-            const newResult = await api.readNamespacedPodLog({
-              name,
-              namespace,
-              container,
-              tailLines: 50,
-              previous,
-            });
-            if (newResult !== lastLog) {
-              controller.enqueue(encoder.encode(`data: ${JSON.stringify({ logs: newResult })}\n\n`));
-              lastLog = newResult;
-            }
-          } catch {
-            clearInterval(poll);
-            clearInterval(heartbeat);
-            controller.close();
-          }
-        }, 2000);
-
-        req.signal.addEventListener("abort", () => {
+            ws.abort();
+            output.destroy();
+            try { controller.close(); } catch { /* already closed */ }
+          });
+        })
+        .catch((error: unknown) => {
           clearInterval(heartbeat);
-          clearInterval(poll);
-          controller.close();
+          const message = error instanceof Error ? error.message : "Log stream failed";
+          try {
+            controller.enqueue(encoder.encode(`data: ${JSON.stringify({ error: message })}\n\n`));
+            controller.close();
+          } catch { /* already closed */ }
         });
-      } catch (error: unknown) {
-        const message = error instanceof Error ? error.message : "Log stream failed";
-        controller.enqueue(encoder.encode(`data: ${JSON.stringify({ error: message })}\n\n`));
-        controller.close();
-      }
+
+      output.on("close", () => {
+        clearInterval(heartbeat);
+        try { controller.close(); } catch { /* already closed */ }
+      });
+
+      output.on("error", () => {
+        clearInterval(heartbeat);
+        try { controller.close(); } catch { /* already closed */ }
+      });
     },
   });
 
