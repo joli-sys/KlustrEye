@@ -15,6 +15,8 @@ import { RESOURCE_REGISTRY } from "@/lib/constants";
 import { stringify, parse } from "yaml";
 import { RelatedEvents } from "@/components/related-events";
 import { Save, Trash2, ArrowLeft } from "lucide-react";
+import Link from "next/link";
+import { RESOURCE_ROUTE_MAP } from "@/lib/constants";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 
 interface ResourceDetailProps {
@@ -97,6 +99,7 @@ export function ResourceDetail({
   const metadata = data.metadata as Record<string, unknown>;
   const labels = (metadata?.labels as Record<string, string>) || {};
   const annotations = (metadata?.annotations as Record<string, string>) || {};
+  const ownerReferences = (metadata?.ownerReferences as { kind: string; name: string; apiVersion: string; controller?: boolean }[]) || [];
 
   return (
     <div className="space-y-4">
@@ -151,6 +154,14 @@ export function ResourceDetail({
                 {typeof metadata?.resourceVersion === "string" && (
                   <InfoRow label="Resource Version" value={metadata.resourceVersion} />
                 )}
+                {ownerReferences.length > 0 && ownerReferences.map((owner) => (
+                  <OwnerRefRow
+                    key={owner.name}
+                    owner={owner}
+                    contextName={contextName}
+                    namespace={namespace}
+                  />
+                ))}
               </CardContent>
             </Card>
 
@@ -222,6 +233,46 @@ function InfoRow({ label, value }: { label: string; value: string }) {
     <div className="flex justify-between">
       <span className="text-muted-foreground">{label}</span>
       <span className="font-mono text-xs">{value}</span>
+    </div>
+  );
+}
+
+// Map singular Kind to plural route key (e.g. "ReplicaSet" -> "replicasets")
+const KIND_TO_PLURAL: Record<string, string> = {};
+for (const [plural, entry] of Object.entries(RESOURCE_REGISTRY)) {
+  KIND_TO_PLURAL[entry.kind] = plural;
+}
+
+function OwnerRefRow({
+  owner,
+  contextName,
+  namespace,
+}: {
+  owner: { kind: string; name: string; controller?: boolean };
+  contextName: string;
+  namespace?: string;
+}) {
+  const plural = KIND_TO_PLURAL[owner.kind];
+  const route = plural ? RESOURCE_ROUTE_MAP[plural] : null;
+
+  return (
+    <div className="flex justify-between">
+      <span className="text-muted-foreground">
+        {owner.controller ? "Controlled By" : "Owner"}
+      </span>
+      <span className="text-xs">
+        <Badge variant="outline" className="text-[10px] mr-1.5">{owner.kind}</Badge>
+        {route?.hasDetail ? (
+          <Link
+            href={`/clusters/${encodeURIComponent(contextName)}/${route.path}/${encodeURIComponent(owner.name)}${namespace ? `?ns=${encodeURIComponent(namespace)}` : ""}`}
+            className="font-mono text-primary hover:underline"
+          >
+            {owner.name}
+          </Link>
+        ) : (
+          <span className="font-mono">{owner.name}</span>
+        )}
+      </span>
     </div>
   );
 }

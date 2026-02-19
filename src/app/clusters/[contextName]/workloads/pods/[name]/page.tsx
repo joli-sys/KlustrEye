@@ -1,12 +1,14 @@
 "use client";
 
-import { use, useMemo } from "react";
+import { use, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
+import { useQuery } from "@tanstack/react-query";
 import { ResourceDetail } from "@/components/resource-detail";
 import { useResource } from "@/hooks/use-resources";
 import { usePodMetrics } from "@/hooks/use-metrics";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { statusBadge } from "@/components/resource-table";
 import { LogViewer } from "@/components/log-viewer";
 import { TerminalPanel } from "@/components/terminal-panel";
@@ -14,6 +16,7 @@ import { PodMetricsChart } from "@/components/pod-metrics-chart";
 import { PortForwardTab } from "@/components/port-forward-tab";
 import { parseCpuValue, parseMemoryValue, formatBytes, formatCpu } from "@/lib/utils";
 import { getPluginsWithResourceExtension } from "@/lib/plugins/registry";
+import { Eye, EyeOff } from "lucide-react";
 import Link from "next/link";
 
 const podPlugins = getPluginsWithResourceExtension("pods");
@@ -47,6 +50,340 @@ function ResourceRow({ label, used, request, limit, formatFn }: {
         </div>
       )}
     </div>
+  );
+}
+
+interface EnvVar {
+  name: string;
+  value?: string;
+  valueFrom?: {
+    configMapKeyRef?: { name: string; key: string };
+    secretKeyRef?: { name: string; key: string };
+    fieldRef?: { fieldPath: string };
+    resourceFieldRef?: { containerName?: string; resource: string };
+  };
+}
+
+interface EnvFromSource {
+  configMapRef?: { name: string };
+  secretRef?: { name: string };
+  prefix?: string;
+}
+
+function SecretValueReveal({
+  contextName,
+  namespace,
+  secretName,
+  secretKey,
+}: {
+  contextName: string;
+  namespace: string;
+  secretName: string;
+  secretKey: string;
+}) {
+  const [revealed, setRevealed] = useState(false);
+  const { data, isLoading } = useQuery({
+    queryKey: ["resource", contextName, "secrets", secretName, namespace],
+    queryFn: async () => {
+      const res = await fetch(
+        `/api/clusters/${encodeURIComponent(contextName)}/resources/secrets/${encodeURIComponent(secretName)}?namespace=${encodeURIComponent(namespace)}`
+      );
+      if (!res.ok) throw new Error(`Failed to fetch secret ${secretName}`);
+      return res.json();
+    },
+    enabled: revealed,
+  });
+
+  const secretData = (data?.data as Record<string, string>) || {};
+  const rawValue = secretData[secretKey];
+
+  return (
+    <span className="inline-flex items-center gap-1 ml-2">
+      {revealed && (
+        <span className="font-mono text-xs">
+          {isLoading ? "..." : rawValue ? atob(rawValue) : "?"}
+        </span>
+      )}
+      {!revealed && <span className="text-xs text-muted-foreground">••••••••</span>}
+      <Button
+        variant="ghost"
+        size="icon"
+        className="h-5 w-5"
+        onClick={() => setRevealed((v) => !v)}
+      >
+        {revealed ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
+      </Button>
+    </span>
+  );
+}
+
+function EnvFromSecretExpander({
+  contextName,
+  namespace,
+  secretName,
+  prefix,
+}: {
+  contextName: string;
+  namespace: string;
+  secretName: string;
+  prefix?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const { data, isLoading } = useQuery({
+    queryKey: ["resource", contextName, "secrets", secretName, namespace],
+    queryFn: async () => {
+      const res = await fetch(
+        `/api/clusters/${encodeURIComponent(contextName)}/resources/secrets/${encodeURIComponent(secretName)}?namespace=${encodeURIComponent(namespace)}`
+      );
+      if (!res.ok) throw new Error(`Failed to fetch secret ${secretName}`);
+      return res.json();
+    },
+    enabled: open,
+  });
+  const [revealed, setRevealed] = useState<Set<string>>(new Set());
+
+  const secretData = (data?.data as Record<string, string>) || {};
+  const keys = Object.keys(secretData).sort();
+
+  return (
+    <div>
+      <button
+        type="button"
+        className="w-full flex items-center gap-2 text-xs py-1 hover:bg-muted/30 transition-colors"
+        onClick={() => setOpen((v) => !v)}
+      >
+        <svg
+          className={`h-3 w-3 text-muted-foreground transition-transform shrink-0 ${open ? "rotate-90" : ""}`}
+          fill="none"
+          viewBox="0 0 24 24"
+          stroke="currentColor"
+          strokeWidth={2}
+        >
+          <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+        </svg>
+        <Badge variant="outline" className="text-[10px]">Secret</Badge>
+        <Link
+          href={`/clusters/${encodeURIComponent(contextName)}/config/secrets/${encodeURIComponent(secretName)}?ns=${encodeURIComponent(namespace)}`}
+          className="font-mono text-primary hover:underline"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {secretName}
+        </Link>
+        {prefix && (
+          <span className="text-muted-foreground">prefix: <span className="font-mono">{prefix}</span></span>
+        )}
+      </button>
+      {open && (
+        <div className="ml-5 border-l divide-y">
+          {isLoading && (
+            <div className="px-3 py-1.5 text-xs text-muted-foreground">Loading...</div>
+          )}
+          {!isLoading && keys.length === 0 && (
+            <div className="px-3 py-1.5 text-xs text-muted-foreground">No data</div>
+          )}
+          {keys.map((key) => {
+            const envName = prefix ? `${prefix}${key}` : key;
+            const isRevealed = revealed.has(key);
+            return (
+              <div key={key} className="flex items-center justify-between gap-4 px-3 py-1">
+                <span className="font-mono text-xs font-medium shrink-0">{envName}</span>
+                <div className="flex items-center gap-1 min-w-0">
+                  <span className="font-mono text-xs">
+                    {isRevealed ? atob(secretData[key]) : "••••••••"}
+                  </span>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-5 w-5 shrink-0"
+                    onClick={() =>
+                      setRevealed((prev) => {
+                        const next = new Set(prev);
+                        if (next.has(key)) next.delete(key);
+                        else next.add(key);
+                        return next;
+                      })
+                    }
+                  >
+                    {isRevealed ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
+                  </Button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function EnvVarSource({ env, contextName, namespace }: { env: EnvVar; contextName: string; namespace: string }) {
+  const vf = env.valueFrom;
+  if (!vf) {
+    return <span className="font-mono text-xs break-all">{env.value ?? ""}</span>;
+  }
+  if (vf.configMapKeyRef) {
+    return (
+      <span className="text-xs">
+        <Badge variant="outline" className="text-[10px] mr-1">ConfigMap</Badge>
+        <span className="font-mono">{vf.configMapKeyRef.name}</span>
+        <span className="text-muted-foreground"> / </span>
+        <span className="font-mono">{vf.configMapKeyRef.key}</span>
+      </span>
+    );
+  }
+  if (vf.secretKeyRef) {
+    return (
+      <span className="text-xs inline-flex items-center flex-wrap">
+        <Badge variant="outline" className="text-[10px] mr-1">Secret</Badge>
+        <span className="font-mono">{vf.secretKeyRef.name}</span>
+        <span className="text-muted-foreground"> / </span>
+        <span className="font-mono">{vf.secretKeyRef.key}</span>
+        <SecretValueReveal
+          contextName={contextName}
+          namespace={namespace}
+          secretName={vf.secretKeyRef.name}
+          secretKey={vf.secretKeyRef.key}
+        />
+      </span>
+    );
+  }
+  if (vf.fieldRef) {
+    return (
+      <span className="text-xs">
+        <Badge variant="outline" className="text-[10px] mr-1">Field</Badge>
+        <span className="font-mono">{vf.fieldRef.fieldPath}</span>
+      </span>
+    );
+  }
+  if (vf.resourceFieldRef) {
+    return (
+      <span className="text-xs">
+        <Badge variant="outline" className="text-[10px] mr-1">Resource</Badge>
+        <span className="font-mono">{vf.resourceFieldRef.resource}</span>
+      </span>
+    );
+  }
+  return <span className="text-xs text-muted-foreground">-</span>;
+}
+
+function EnvVarsCard({
+  containers,
+  initContainers,
+  contextName,
+  namespace,
+}: {
+  containers: Record<string, unknown>[];
+  initContainers: Record<string, unknown>[];
+  contextName: string;
+  namespace: string;
+}) {
+  const allContainers: (Record<string, unknown> & { isInit: boolean })[] = [
+    ...initContainers.map((c) => ({ ...c, isInit: true as const })),
+    ...containers.map((c) => ({ ...c, isInit: false as const })),
+  ];
+  const containersWithEnv = allContainers.filter((c) => {
+    const env = c.env as EnvVar[] | undefined;
+    const envFrom = c.envFrom as EnvFromSource[] | undefined;
+    return (env && env.length > 0) || (envFrom && envFrom.length > 0);
+  });
+
+  const [expanded, setExpanded] = useState<Record<string, boolean>>(() => {
+    const initial: Record<string, boolean> = {};
+    containersWithEnv.forEach((c) => { initial[c.name as string] = true; });
+    return initial;
+  });
+
+  if (containersWithEnv.length === 0) return null;
+
+  return (
+    <Card className="lg:col-span-2">
+      <CardHeader>
+        <CardTitle className="text-base">Environment Variables</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {containersWithEnv.map((container) => {
+          const cName = container.name as string;
+          const env = (container.env as EnvVar[]) || [];
+          const envFrom = (container.envFrom as EnvFromSource[]) || [];
+          const isExpanded = expanded[cName] ?? true;
+
+          return (
+            <div key={cName} className="rounded-lg border">
+              <button
+                type="button"
+                className="w-full flex items-center justify-between p-3 text-left hover:bg-muted/50 transition-colors"
+                onClick={() => setExpanded((prev) => ({ ...prev, [cName]: !prev[cName] }))}
+              >
+                <div className="flex items-center gap-2">
+                  <span className="font-medium text-sm">{cName}</span>
+                  {container.isInit && <Badge variant="outline" className="text-[10px]">init</Badge>}
+                  <span className="text-xs text-muted-foreground">
+                    {env.length} var{env.length !== 1 ? "s" : ""}
+                    {envFrom.length > 0 && ` + ${envFrom.length} source${envFrom.length !== 1 ? "s" : ""}`}
+                  </span>
+                </div>
+                <svg
+                  className={`h-4 w-4 text-muted-foreground transition-transform ${isExpanded ? "rotate-180" : ""}`}
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                  strokeWidth={2}
+                >
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                </svg>
+              </button>
+              {isExpanded && (
+                <div className="border-t">
+                  {envFrom.length > 0 && (
+                    <div className="px-3 py-2 bg-muted/30 border-b">
+                      <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Imported from</span>
+                      <div className="mt-1 space-y-1">
+                        {envFrom.map((src, i) => (
+                          <div key={i}>
+                            {src.configMapRef && (
+                              <div className="flex items-center gap-2 text-xs py-1">
+                                <Badge variant="outline" className="text-[10px]">ConfigMap</Badge>
+                                <Link
+                                  href={`/clusters/${encodeURIComponent(contextName)}/config/configmaps/${encodeURIComponent(src.configMapRef.name)}?ns=${encodeURIComponent(namespace)}`}
+                                  className="font-mono text-primary hover:underline"
+                                >
+                                  {src.configMapRef.name}
+                                </Link>
+                                {src.prefix && (
+                                  <span className="text-muted-foreground">prefix: <span className="font-mono">{src.prefix}</span></span>
+                                )}
+                              </div>
+                            )}
+                            {src.secretRef && (
+                              <EnvFromSecretExpander
+                                contextName={contextName}
+                                namespace={namespace}
+                                secretName={src.secretRef.name}
+                                prefix={src.prefix}
+                              />
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  <div className="divide-y">
+                    {env.map((e) => (
+                      <div key={e.name} className="flex items-start justify-between gap-4 px-3 py-1.5">
+                        <span className="font-mono text-xs font-medium shrink-0">{e.name}</span>
+                        <div className="text-right min-w-0">
+                          <EnvVarSource env={e} contextName={contextName} namespace={namespace} />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </CardContent>
+    </Card>
   );
 }
 
@@ -359,6 +696,13 @@ export default function PodDetailPage({ params }: { params: Promise<{ contextNam
             </CardContent>
           </Card>
         )}
+
+        <EnvVarsCard
+          containers={containers}
+          initContainers={initContainers}
+          contextName={ctx}
+          namespace={namespace}
+        />
       </div>
     </ResourceDetail>
   );
