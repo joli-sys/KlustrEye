@@ -184,12 +184,12 @@ export function CommandPalette() {
           )}
         </div>
         <div ref={listRef} className="max-h-80 overflow-y-auto py-2">
-          {/* Favorites section */}
+          {/* Saved Searches section */}
           {favoriteItems.length > 0 && (
             <>
               <div className="px-4 py-1.5 text-xs font-medium text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
                 <Star className="h-3 w-3" />
-                Favorites
+                Saved Searches
               </div>
               {favoriteItems.map((item) => {
                 if (item.type !== "favorite") return null;

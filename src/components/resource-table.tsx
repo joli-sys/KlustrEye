@@ -19,7 +19,7 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ArrowUpDown, MoreHorizontal, Trash2, Edit, Terminal, FileText, Star } from "lucide-react";
-import { formatAge } from "@/lib/utils";
+import { formatAge, cn } from "@/lib/utils";
 import { useSavedSearches } from "@/lib/stores/saved-searches-store";
 import { useTabStore } from "@/lib/stores/tab-store";
 import Link from "next/link";
@@ -305,13 +305,15 @@ export function ResourceTable({
         </div>
       )}
 
-      <div className="rounded-md border">
+      <div className="rounded-md border overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
             {table.getHeaderGroups().map((headerGroup) => (
               <tr key={headerGroup.id} className="border-b bg-muted/50">
-                {headerGroup.headers.map((header) => (
-                  <th key={header.id} className="px-4 py-3 text-left font-medium text-muted-foreground">
+                {headerGroup.headers.map((header) => {
+                  const colMeta = header.column.columnDef.meta as { className?: string } | undefined;
+                  return (
+                  <th key={header.id} className={cn("px-4 py-3 text-left font-medium text-muted-foreground whitespace-nowrap", colMeta?.className)}>
                     {header.isPlaceholder ? null : (
                       <div
                         className={header.column.getCanSort() ? "flex items-center gap-1 cursor-pointer select-none" : ""}
@@ -322,15 +324,18 @@ export function ResourceTable({
                       </div>
                     )}
                   </th>
-                ))}
+                  );
+                })}
               </tr>
             ))}
           </thead>
           <tbody>
             {table.getRowModel().rows.map((row) => (
               <tr key={row.id} className={`border-b hover:bg-muted/30 transition-colors ${row.getIsSelected() ? "bg-muted/40" : ""}`}>
-                {row.getVisibleCells().map((cell) => (
-                  <td key={cell.id} className="px-4 py-2.5">
+                {row.getVisibleCells().map((cell) => {
+                  const colMeta = cell.column.columnDef.meta as { className?: string } | undefined;
+                  return (
+                  <td key={cell.id} className={cn("px-4 py-2.5", colMeta?.className)}>
                     {cell.column.id === "name" && detailLinkFn ? (
                       <Link
                         href={detailLinkFn(row.original)}
@@ -358,7 +363,8 @@ export function ResourceTable({
                       flexRender(cell.column.columnDef.cell, cell.getContext())
                     )}
                   </td>
-                ))}
+                  );
+                })}
               </tr>
             ))}
             {table.getRowModel().rows.length === 0 && (

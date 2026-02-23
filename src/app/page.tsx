@@ -157,30 +157,30 @@ export default function HomePage() {
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
-      <header className="drag-region flex items-center justify-center pl-20 px-8 py-3 border-b bg-card">
+      <header className="drag-region flex items-center justify-center pl-4 md:pl-20 px-8 py-3 border-b bg-card">
         <div className="no-drag-region">
           <KlustrEyeLogo size="sm" />
         </div>
       </header>
 
-      <div className="max-w-5xl mx-auto p-8 flex-1">
-        <div className="mb-8 flex items-center justify-between gap-4">
+      <div className="max-w-5xl mx-auto p-4 md:p-8 flex-1">
+        <div className="mb-8 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
           <div>
-            <h1 className="text-3xl font-bold">Clusters</h1>
+            <h1 className="text-2xl sm:text-3xl font-bold">Clusters</h1>
             <p className="text-muted-foreground mt-1">
               Select a cluster to manage
             </p>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 w-full sm:w-auto">
             {clusters && clusters.length > 0 && (
-              <div className="relative">
+              <div className="relative flex-1 sm:flex-initial">
                 <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
                 <Input
                   ref={filterInputRef}
                   placeholder="Filter clusters..."
                   value={filterQuery}
                   onChange={(e) => setFilterQuery(e.target.value)}
-                  className="pl-8 w-56 h-8 text-sm"
+                  className="pl-8 w-full sm:w-56 h-8 text-sm"
                 />
                 <kbd className="absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none inline-flex h-5 select-none items-center gap-0.5 rounded border bg-muted px-1.5 font-mono text-[10px] font-medium text-muted-foreground">
                   <span className="text-xs">⌘</span>F
@@ -190,10 +190,11 @@ export default function HomePage() {
             <Button
               variant="outline"
               size="sm"
+              className="shrink-0"
               onClick={() => setManageOrgsOpen(true)}
             >
-              <FolderOpen className="h-4 w-4 mr-2" />
-              Manage Organizations
+              <FolderOpen className="h-4 w-4 sm:mr-2" />
+              <span className="hidden sm:inline">Manage Organizations</span>
             </Button>
           </div>
         </div>

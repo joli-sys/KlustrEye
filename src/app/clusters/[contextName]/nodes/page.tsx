@@ -79,6 +79,7 @@ export default function NodesPage({ params }: { params: Promise<{ contextName: s
     {
       id: "instance_type",
       header: "Instance Type",
+      meta: { className: "hidden xl:table-cell" },
       accessorFn: (row) => {
         const labels = (row.metadata as Record<string, unknown>)?.labels as Record<string, string> | undefined;
         if (!labels) return "-";
@@ -93,6 +94,7 @@ export default function NodesPage({ params }: { params: Promise<{ contextName: s
     {
       id: "capacity_type",
       header: "Capacity Type",
+      meta: { className: "hidden xl:table-cell" },
       accessorFn: (row) => {
         const labels = (row.metadata as Record<string, unknown>)?.labels as Record<string, string> | undefined;
         if (!labels) return "-";
@@ -108,6 +110,7 @@ export default function NodesPage({ params }: { params: Promise<{ contextName: s
     {
       id: "cpu",
       header: "CPU",
+      meta: { className: "hidden lg:table-cell" },
       accessorFn: (row) => {
         const name = (row.metadata as Record<string, unknown>)?.name as string;
         const metrics = metricsMap.get(name);
@@ -135,6 +138,7 @@ export default function NodesPage({ params }: { params: Promise<{ contextName: s
     {
       id: "memory",
       header: "Memory",
+      meta: { className: "hidden lg:table-cell" },
       accessorFn: (row) => {
         const name = (row.metadata as Record<string, unknown>)?.name as string;
         const metrics = metricsMap.get(name);
@@ -162,6 +166,7 @@ export default function NodesPage({ params }: { params: Promise<{ contextName: s
     {
       id: "ephemeral_storage",
       header: "Ephemeral Storage",
+      meta: { className: "hidden xl:table-cell" },
       accessorFn: (row) => {
         const allocatable = (row.status as Record<string, unknown>)?.allocatable as Record<string, string> | undefined;
         if (!allocatable?.["ephemeral-storage"]) return -1;
@@ -189,6 +194,7 @@ export default function NodesPage({ params }: { params: Promise<{ contextName: s
     {
       id: "k8s_version",
       header: "K8s Version",
+      meta: { className: "hidden xl:table-cell" },
       accessorFn: (row) => {
         const info = (row.status as Record<string, unknown>)?.nodeInfo as Record<string, unknown> | undefined;
         return info?.kubeletVersion || "-";
@@ -197,6 +203,7 @@ export default function NodesPage({ params }: { params: Promise<{ contextName: s
     {
       id: "taints",
       header: "Taints",
+      meta: { className: "hidden 2xl:table-cell" },
       accessorFn: (row) => {
         const spec = row.spec as Record<string, unknown> | undefined;
         const taints = spec?.taints as Record<string, string>[] | undefined;

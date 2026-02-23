@@ -92,7 +92,7 @@ export default function PodsPage({ params }: { params: Promise<{ contextName: st
 
   const columns: ColumnDef<Record<string, unknown>>[] = useMemo(() => [
     nameColumn(),
-    namespaceColumn(),
+    { ...namespaceColumn(), meta: { className: "hidden xl:table-cell" } },
     {
       id: "ready",
       header: "Ready",
@@ -112,6 +112,7 @@ export default function PodsPage({ params }: { params: Promise<{ contextName: st
     {
       id: "cpu",
       header: "CPU",
+      meta: { className: "hidden lg:table-cell" },
       accessorFn: (row) => {
         const meta = row.metadata as Record<string, unknown>;
         const key = `${meta?.namespace}/${meta?.name}`;
@@ -139,6 +140,7 @@ export default function PodsPage({ params }: { params: Promise<{ contextName: st
     {
       id: "memory",
       header: "Memory",
+      meta: { className: "hidden lg:table-cell" },
       accessorFn: (row) => {
         const meta = row.metadata as Record<string, unknown>;
         const key = `${meta?.namespace}/${meta?.name}`;
@@ -166,6 +168,7 @@ export default function PodsPage({ params }: { params: Promise<{ contextName: st
     {
       id: "restarts",
       header: "Restarts",
+      meta: { className: "hidden xl:table-cell" },
       accessorFn: (row) => {
         const status = row.status as Record<string, unknown>;
         const containers = (status?.containerStatuses as Record<string, unknown>[]) || [];
@@ -175,6 +178,7 @@ export default function PodsPage({ params }: { params: Promise<{ contextName: st
     {
       id: "node",
       header: "Node",
+      meta: { className: "hidden xl:table-cell" },
       accessorFn: (row) => (row.spec as Record<string, unknown>)?.nodeName,
       cell: ({ getValue }) => {
         const nodeName = getValue() as string;

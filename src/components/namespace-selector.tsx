@@ -21,7 +21,7 @@ export function NamespaceSelector({ contextName }: { contextName: string }) {
       value={selectedNamespace}
       onChange={(e) => setSelectedNamespace(e.target.value)}
       options={options}
-      className="w-48"
+      className="w-32 md:w-48"
     />
   );
 }

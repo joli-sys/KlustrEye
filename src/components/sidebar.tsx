@@ -27,10 +27,11 @@ const iconMap: Record<string, React.ComponentType<{ className?: string }>> = {
 
 const pagePlugins = getPluginsWithPages();
 
-export function Sidebar({ contextName }: { contextName: string }) {
+export function Sidebar({ contextName, onNavigate, forceExpanded }: { contextName: string; onNavigate?: () => void; forceExpanded?: boolean }) {
   const pathname = usePathname();
   const router = useRouter();
-  const { sidebarOpen, toggleSidebar, setSelectedNamespace } = useUIStore();
+  const { sidebarOpen: _sidebarOpen, toggleSidebar, setSelectedNamespace } = useUIStore();
+  const sidebarOpen = forceExpanded ?? _sidebarOpen;
   const { openTab } = useTabStore();
   const { searches: savedSearches, removeSearch } = useSavedSearches();
   const basePath = `/clusters/${encodeURIComponent(contextName)}`;
@@ -38,7 +39,7 @@ export function Sidebar({ contextName }: { contextName: string }) {
   return (
     <aside
       className={cn(
-        "flex flex-col border-r bg-card transition-all duration-200 shrink-0",
+        "flex flex-col h-full border-r bg-card transition-all duration-200 shrink-0",
         sidebarOpen ? "w-56" : "w-14"
       )}
     >
@@ -78,6 +79,8 @@ export function Sidebar({ contextName }: { contextName: string }) {
                     if (e.ctrlKey || e.metaKey || e.button === 1) {
                       e.preventDefault();
                       openTab(contextName, href, item.label);
+                    } else {
+                      onNavigate?.();
                     }
                   }}
                   onAuxClick={(e) => {
@@ -121,6 +124,8 @@ export function Sidebar({ contextName }: { contextName: string }) {
                     if (e.ctrlKey || e.metaKey || e.button === 1) {
                       e.preventDefault();
                       openTab(contextName, href, plugin.manifest.name);
+                    } else {
+                      onNavigate?.();
                     }
                   }}
                   onAuxClick={(e) => {
@@ -173,6 +178,7 @@ export function Sidebar({ contextName }: { contextName: string }) {
                   onClick={() => {
                     if (s.namespace) setSelectedNamespace(s.namespace);
                     router.push(href);
+                    onNavigate?.();
                   }}
                 >
                   <div className="flex items-center gap-3 px-3 py-1.5 min-w-0 flex-1">
@@ -206,6 +212,7 @@ export function Sidebar({ contextName }: { contextName: string }) {
       <div className="border-t p-2">
         <Link
           href={`${basePath}/settings`}
+          onClick={() => onNavigate?.()}
           className={cn(
             "flex items-center gap-3 px-3 py-1.5 mx-1 rounded-md text-sm text-muted-foreground hover:bg-accent/50 hover:text-foreground transition-colors",
             pathname.includes("/settings") && "bg-accent text-accent-foreground"
