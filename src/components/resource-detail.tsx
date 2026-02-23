@@ -53,7 +53,8 @@ export function ResourceDetail({
     const filter = currentSearchParams.get("filter");
     return filter ? `${parentPath}?filter=${encodeURIComponent(filter)}` : parentPath;
   })();
-  const [tab, setTab] = useState("info");
+  const initialTab = currentSearchParams.get("tab") || "info";
+  const [tab, setTab] = useState(initialTab);
   const [editedYaml, setEditedYaml] = useState<string | null>(null);
   const entry = RESOURCE_REGISTRY[kind];
 

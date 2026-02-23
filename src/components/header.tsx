@@ -14,8 +14,8 @@ export function Header({ contextName }: { contextName: string }) {
   const displayName = current?.displayName;
 
   return (
-    <header className="flex items-center justify-between px-4 border-b h-14 bg-card">
-      <div className="flex items-center gap-4">
+    <header className="drag-region flex items-center justify-between px-4 border-b h-14 bg-card">
+      <div className="no-drag-region flex items-center gap-4">
         <div>
           <h2 className="font-semibold text-sm">{displayName || contextName}</h2>
           {displayName && (
@@ -24,7 +24,7 @@ export function Header({ contextName }: { contextName: string }) {
         </div>
         <NamespaceSelector contextName={contextName} />
       </div>
-      <div className="flex items-center gap-2">
+      <div className="no-drag-region flex items-center gap-2">
         <PortForwardIndicator contextName={contextName} />
         <Button
           variant="outline"

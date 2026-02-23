@@ -1,18 +1,20 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { useUIStore } from "@/lib/stores/ui-store";
 import { useTabStore } from "@/lib/stores/tab-store";
-import { SIDEBAR_SECTIONS } from "@/lib/constants";
+import { useSavedSearches } from "@/lib/stores/saved-searches-store";
+import { SIDEBAR_SECTIONS, RESOURCE_ROUTE_MAP, RESOURCE_REGISTRY, type ResourceKind } from "@/lib/constants";
 import { KlustrEyeLogo } from "@/components/klustreye-logo";
 import { ClusterSwitcher } from "@/components/cluster-switcher";
+import { Badge } from "@/components/ui/badge";
 import {
   LayoutDashboard, Server, Box, Layers, Database, Cpu, Copy, Play, Clock,
   Network, Globe, FileText, KeyRound, UserCog, HardDrive, Activity, Anchor,
   Puzzle, Cable, Share2, ShieldCheck, ArrowUpDown, SlidersHorizontal,
-  PanelLeftClose, PanelLeft, Settings, BarChart3,
+  PanelLeftClose, PanelLeft, Settings, BarChart3, Star, X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { getPluginsWithPages } from "@/lib/plugins/registry";
@@ -27,8 +29,10 @@ const pagePlugins = getPluginsWithPages();
 
 export function Sidebar({ contextName }: { contextName: string }) {
   const pathname = usePathname();
-  const { sidebarOpen, toggleSidebar } = useUIStore();
+  const router = useRouter();
+  const { sidebarOpen, toggleSidebar, setSelectedNamespace } = useUIStore();
   const { openTab } = useTabStore();
+  const { searches: savedSearches, removeSearch } = useSavedSearches();
   const basePath = `/clusters/${encodeURIComponent(contextName)}`;
 
   return (
@@ -136,6 +140,63 @@ export function Sidebar({ contextName }: { contextName: string }) {
                   <Icon className="h-4 w-4 shrink-0" />
                   {sidebarOpen && <span className="truncate">{plugin.manifest.name}</span>}
                 </Link>
+              );
+            })}
+          </div>
+        )}
+        {savedSearches.length > 0 && (
+          <div className="mb-2 border-t pt-2">
+            {sidebarOpen && (
+              <div className="px-3 py-1 text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
+                <Star className="h-3 w-3" />
+                Saved Searches
+              </div>
+            )}
+            {savedSearches.map((s) => {
+              const route = RESOURCE_ROUTE_MAP[s.kind];
+              const path = route?.path ?? s.kind;
+              const href = `${basePath}/${path}?filter=${encodeURIComponent(s.query)}`;
+              const registry = RESOURCE_REGISTRY[s.kind as ResourceKind];
+              const kindLabel = registry?.kind ?? s.kind;
+              const tooltip = [
+                s.name,
+                `Kind: ${kindLabel}`,
+                `Filter: ${s.query}`,
+                s.namespace ? `Namespace: ${s.namespace}` : null,
+              ].filter(Boolean).join("\n");
+
+              return (
+                <div
+                  key={s.id}
+                  className="group flex items-center gap-1 mx-1 rounded-md text-sm text-muted-foreground hover:bg-accent/50 hover:text-foreground transition-colors cursor-pointer"
+                  title={tooltip}
+                  onClick={() => {
+                    if (s.namespace) setSelectedNamespace(s.namespace);
+                    router.push(href);
+                  }}
+                >
+                  <div className="flex items-center gap-3 px-3 py-1.5 min-w-0 flex-1">
+                    <Star className="h-4 w-4 shrink-0 text-yellow-500" />
+                    {sidebarOpen && (
+                      <>
+                        <span className="truncate flex-1">{s.name}</span>
+                        <Badge variant="secondary" className="text-[10px] shrink-0">{kindLabel}</Badge>
+                      </>
+                    )}
+                  </div>
+                  {sidebarOpen && (
+                    <button
+                      className="opacity-0 group-hover:opacity-100 p-1 mr-1 rounded hover:bg-accent transition-opacity"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        removeSearch(s.id);
+                      }}
+                      title="Remove favorite"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  )}
+                </div>
               );
             })}
           </div>

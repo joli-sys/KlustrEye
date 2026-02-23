@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { useClusters } from "@/hooks/use-clusters";
 import { useOrganizations } from "@/hooks/use-organizations";
 import { useKubeconfigSetting, useUpdateKubeconfigPath } from "@/hooks/use-kubeconfig-setting";
@@ -13,7 +13,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { COLOR_PRESETS, DEFAULT_COLOR_SCHEME } from "@/lib/color-presets";
-import { Server, AlertCircle, Pencil, Network, User, Box, FolderOpen, Settings, ChevronDown, ChevronRight, Loader2 } from "lucide-react";
+import { Server, AlertCircle, Pencil, Network, User, Box, FolderOpen, Settings, ChevronDown, ChevronRight, Loader2, Search } from "lucide-react";
 import { CloudProviderIcon } from "@/components/cloud-provider-icon";
 import Link from "next/link";
 import type { ClusterContext } from "@/hooks/use-clusters";
@@ -28,6 +28,18 @@ export default function HomePage() {
   } | null>(null);
   const [manageOrgsOpen, setManageOrgsOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [filterQuery, setFilterQuery] = useState("");
+  const filterInputRef = useRef<HTMLInputElement>(null);
+
+  const handleFocusFilter = useCallback(() => {
+    filterInputRef.current?.focus();
+    filterInputRef.current?.select();
+  }, []);
+
+  useEffect(() => {
+    window.addEventListener("focus-table-filter", handleFocusFilter);
+    return () => window.removeEventListener("focus-table-filter", handleFocusFilter);
+  }, [handleFocusFilter]);
 
   const { data: kubeconfigSetting } = useKubeconfigSetting();
   const updateKubeconfig = useUpdateKubeconfigPath();
@@ -41,11 +53,22 @@ export default function HomePage() {
 
   const hasOrgs = orgs && orgs.length > 0;
 
+  const filteredClusters = useMemo(() => {
+    if (!clusters) return undefined;
+    if (!filterQuery.trim()) return clusters;
+    const q = filterQuery.toLowerCase();
+    return clusters.filter(
+      (c) =>
+        c.name.toLowerCase().includes(q) ||
+        (c.displayName && c.displayName.toLowerCase().includes(q))
+    );
+  }, [clusters, filterQuery]);
+
   const grouped = useMemo(() => {
-    if (!clusters) return [];
+    if (!filteredClusters) return [];
     const groups = new Map<string | null, { name: string | null; clusters: ClusterContext[] }>();
 
-    for (const ctx of clusters) {
+    for (const ctx of filteredClusters) {
       const key = ctx.organizationId;
       if (!groups.has(key)) {
         groups.set(key, { name: ctx.organizationName, clusters: [] });
@@ -62,7 +85,7 @@ export default function HomePage() {
     });
 
     return entries.map(([, group]) => group);
-  }, [clusters]);
+  }, [filteredClusters]);
 
   function renderClusterCard(ctx: ClusterContext) {
     return (
@@ -134,26 +157,45 @@ export default function HomePage() {
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
-      <header className="flex items-center justify-center px-8 py-3 mt-2 border-b bg-card">
-        <KlustrEyeLogo size="sm" />
+      <header className="drag-region flex items-center justify-center pl-20 px-8 py-3 border-b bg-card">
+        <div className="no-drag-region">
+          <KlustrEyeLogo size="sm" />
+        </div>
       </header>
 
       <div className="max-w-5xl mx-auto p-8 flex-1">
-        <div className="mb-8 flex items-center justify-between">
+        <div className="mb-8 flex items-center justify-between gap-4">
           <div>
             <h1 className="text-3xl font-bold">Clusters</h1>
             <p className="text-muted-foreground mt-1">
               Select a cluster to manage
             </p>
           </div>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setManageOrgsOpen(true)}
-          >
-            <FolderOpen className="h-4 w-4 mr-2" />
-            Manage Organizations
-          </Button>
+          <div className="flex items-center gap-3">
+            {clusters && clusters.length > 0 && (
+              <div className="relative">
+                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+                <Input
+                  ref={filterInputRef}
+                  placeholder="Filter clusters..."
+                  value={filterQuery}
+                  onChange={(e) => setFilterQuery(e.target.value)}
+                  className="pl-8 w-56 h-8 text-sm"
+                />
+                <kbd className="absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none inline-flex h-5 select-none items-center gap-0.5 rounded border bg-muted px-1.5 font-mono text-[10px] font-medium text-muted-foreground">
+                  <span className="text-xs">⌘</span>F
+                </kbd>
+              </div>
+            )}
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setManageOrgsOpen(true)}
+            >
+              <FolderOpen className="h-4 w-4 mr-2" />
+              Manage Organizations
+            </Button>
+          </div>
         </div>
 
         {clusters && clusters.length > 0 && (
@@ -240,13 +282,13 @@ export default function HomePage() {
           </div>
         )}
 
-        {clusters && !hasOrgs && (
+        {filteredClusters && !hasOrgs && (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {clusters.map(renderClusterCard)}
+            {filteredClusters.map(renderClusterCard)}
           </div>
         )}
 
-        {clusters && hasOrgs && (
+        {filteredClusters && hasOrgs && (
           <div className="space-y-8">
             {grouped.map((group) => (
               <div key={group.name ?? "__ungrouped"}>

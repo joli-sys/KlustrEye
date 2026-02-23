@@ -270,6 +270,10 @@ export default function PodsPage({ params }: { params: Promise<{ contextName: st
           const metadata = item.metadata as Record<string, unknown>;
           router.push(`/clusters/${encodeURIComponent(ctx)}/workloads/pods/${metadata.name}?tab=terminal&ns=${metadata.namespace}`);
         }}
+        onEdit={(item) => {
+          const metadata = item.metadata as Record<string, unknown>;
+          router.push(`/clusters/${encodeURIComponent(ctx)}/workloads/pods/${metadata.name}?tab=yaml&ns=${metadata.namespace}`);
+        }}
         detailLinkFn={(item) => {
           const metadata = item.metadata as Record<string, unknown>;
           return `/clusters/${encodeURIComponent(ctx)}/workloads/pods/${metadata.name}?ns=${metadata.namespace}`;

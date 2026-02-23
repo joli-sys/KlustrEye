@@ -73,7 +73,7 @@ const LOADING_HTML = `data:text/html;charset=utf-8,${encodeURIComponent(`
 <head><style>
   body { margin:0; background:#09090b; color:#a1a1aa; display:flex;
          align-items:center; justify-content:center; height:100vh;
-         font-family:system-ui,sans-serif; }
+         font-family:system-ui,sans-serif; -webkit-app-region:drag; }
   .loader { text-align:center; }
   .spinner { width:32px; height:32px; border:3px solid #27272a;
              border-top-color:#a1a1aa; border-radius:50%;
