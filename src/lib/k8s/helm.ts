@@ -1,12 +1,23 @@
 import { execFile } from "child_process";
 import { promisify } from "util";
 import { writeFile, unlink } from "fs/promises";
-import { tmpdir } from "os";
+import { homedir, tmpdir } from "os";
 import { join } from "path";
 import { gunzipSync } from "zlib";
 import { getCoreApi } from "./client";
 
 const execFileAsync = promisify(execFile);
+
+const extraPaths = [
+  "/usr/local/bin",
+  "/opt/homebrew/bin",
+  join(homedir(), ".rd/bin"),
+  join(homedir(), ".docker/bin"),
+];
+const helmEnv = {
+  ...process.env,
+  PATH: [process.env.PATH, ...extraPaths].filter(Boolean).join(":"),
+};
 
 interface HelmRelease {
   name: string;
@@ -37,6 +48,7 @@ async function helm(args: string[], kubeContext?: string): Promise<string> {
   const { stdout } = await execFileAsync("helm", fullArgs, {
     timeout: 60000,
     maxBuffer: 10 * 1024 * 1024,
+    env: helmEnv,
   });
   return stdout;
 }
