@@ -22,6 +22,7 @@ import { ArrowUpDown, MoreHorizontal, Trash2, Edit, Terminal, FileText, Star } f
 import { formatAge, cn } from "@/lib/utils";
 import { useSavedSearches } from "@/lib/stores/saved-searches-store";
 import { useTabStore } from "@/lib/stores/tab-store";
+import { useUIStore } from "@/lib/stores/ui-store";
 import Link from "next/link";
 
 const globalFilterFn: FilterFn<Record<string, unknown>> = (row, _columnId, filterValue) => {
@@ -94,6 +95,8 @@ export function ResourceTable({
   const pathname = usePathname();
   const router = useRouter();
   const { openTab } = useTabStore();
+  const resourceFilters = useUIStore((s) => s.resourceFilters);
+  const setResourceFilter = useUIStore((s) => s.setResourceFilter);
 
   // Derive cluster context from pathname: /clusters/<contextName>/...
   const contextName = (() => {
@@ -101,11 +104,35 @@ export function ResourceTable({
     const idx = parts.indexOf("clusters");
     return idx !== -1 && parts[idx + 1] ? decodeURIComponent(parts[idx + 1]) : "";
   })();
+  const storeKey = contextName && resourceKind ? `${contextName}::${resourceKind}` : null;
   const [sorting, setSorting] = useState<SortingState>([]);
-  const [globalFilter, setGlobalFilter] = useState(() => searchParams.get("filter") || "");
+  const [globalFilter, setGlobalFilter] = useState(() => {
+    const urlFilter = searchParams.get("filter");
+    if (urlFilter) return urlFilter;
+    if (storeKey && resourceFilters[storeKey]) return resourceFilters[storeKey];
+    return "";
+  });
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const filterInputRef = useRef<HTMLInputElement>(null);
   const { searches, addSearch, removeSearch } = useSavedSearches();
+
+  // On mount: sync URL when filter was restored from store, and save URL filter to store
+  const didSyncRef = useRef(false);
+  useEffect(() => {
+    if (didSyncRef.current) return;
+    didSyncRef.current = true;
+    const urlFilter = searchParams.get("filter");
+    if (!urlFilter && globalFilter) {
+      // Restored from store — push filter into URL
+      const params = new URLSearchParams(searchParams.toString());
+      params.set("filter", globalFilter);
+      router.replace(`${pathname}?${params.toString()}`, { scroll: false });
+    }
+    if (urlFilter && storeKey) {
+      // URL has filter — save to store
+      setResourceFilter(storeKey, urlFilter);
+    }
+  });
 
   const handleFilterChange = useCallback(
     (value: string) => {
@@ -118,8 +145,11 @@ export function ResourceTable({
       }
       const qs = params.toString();
       router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
+      if (storeKey) {
+        setResourceFilter(storeKey, value);
+      }
     },
-    [pathname, router, searchParams]
+    [pathname, router, searchParams, storeKey, setResourceFilter]
   );
 
   const savedMatch = useMemo(() => {

@@ -3,6 +3,7 @@ import { parse } from "url";
 import next from "next";
 import { WebSocketServer } from "ws";
 import { handleTerminalConnection } from "./src/lib/ws/terminal-handler";
+import { handleShellConnection } from "./src/lib/ws/shell-handler";
 import { cleanupAllPortForwards, markStaleSessionsStopped } from "./src/lib/k8s/port-forward";
 import { ensureDatabase } from "./src/lib/prisma";
 
@@ -34,6 +35,21 @@ export async function startServer(opts: {
 
   server.on("upgrade", async (req, socket, head) => {
     const { pathname } = parse(req.url!, true);
+
+    // Route: /ws/shell/:contextName — local shell with kubectl context
+    if (pathname?.startsWith("/ws/shell/")) {
+      wss.handleUpgrade(req, socket, head, (ws) => {
+        const parts = pathname.split("/").filter(Boolean);
+        // parts: ["ws", "shell", contextName]
+        if (parts.length >= 3) {
+          const contextName = decodeURIComponent(parts[2]);
+          handleShellConnection(ws, { contextName });
+        } else {
+          ws.close(1008, "Invalid shell path");
+        }
+      });
+      return;
+    }
 
     // Route: /ws/terminal/:contextName/:namespace/:pod/:container
     if (pathname?.startsWith("/ws/terminal/")) {

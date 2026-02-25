@@ -8,9 +8,11 @@ import "@xterm/xterm/css/xterm.css";
 
 interface TerminalInnerProps {
   wsUrl: string;
+  className?: string;
+  connectMessage?: string;
 }
 
-export function TerminalInner({ wsUrl }: TerminalInnerProps) {
+export function TerminalInner({ wsUrl, className, connectMessage }: TerminalInnerProps) {
   const terminalRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
@@ -45,7 +47,8 @@ export function TerminalInner({ wsUrl }: TerminalInnerProps) {
     wsRef.current = ws;
 
     ws.onopen = () => {
-      term.writeln("Connected to container...\r\n");
+      const msg = connectMessage !== undefined ? connectMessage : "Connected to container...\r\n";
+      if (msg) term.writeln(msg);
       // Send resize
       const { cols, rows } = term;
       ws.send(JSON.stringify({ type: "resize", cols, rows }));
@@ -87,5 +90,5 @@ export function TerminalInner({ wsUrl }: TerminalInnerProps) {
     };
   }, [wsUrl]);
 
-  return <div ref={terminalRef} className="h-96" />;
+  return <div ref={terminalRef} className={className || "h-96"} />;
 }

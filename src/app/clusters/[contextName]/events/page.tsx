@@ -2,7 +2,7 @@
 
 import { use, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { useUIStore } from "@/lib/stores/ui-store";
+import { useClusterNamespace } from "@/hooks/use-cluster-namespace";
 import { ResourceTable, nameColumn, namespaceColumn, ageColumn } from "@/components/resource-table";
 import { Badge } from "@/components/ui/badge";
 import type { ColumnDef } from "@tanstack/react-table";
@@ -83,7 +83,7 @@ const columns: ColumnDef<Record<string, unknown>>[] = [
 export default function EventsPage({ params }: { params: Promise<{ contextName: string }> }) {
   const { contextName } = use(params);
   const ctx = decodeURIComponent(contextName);
-  const { selectedNamespace } = useUIStore();
+  const selectedNamespace = useClusterNamespace(ctx);
   const ns = selectedNamespace === "__all__" ? undefined : selectedNamespace;
 
   const { data, isLoading } = useQuery({

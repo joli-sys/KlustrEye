@@ -4,11 +4,11 @@ import { NamespaceSelector } from "@/components/namespace-selector";
 import { PortForwardIndicator } from "@/components/port-forward-indicator";
 import { useClusters } from "@/hooks/use-clusters";
 import { Button } from "@/components/ui/button";
-import { Search, Menu } from "lucide-react";
+import { Search, Menu, Terminal } from "lucide-react";
 import { useUIStore } from "@/lib/stores/ui-store";
 
 export function Header({ contextName }: { contextName: string }) {
-  const { setCommandPaletteOpen, setMobileSidebarOpen } = useUIStore();
+  const { setCommandPaletteOpen, setMobileSidebarOpen, toggleShellTerminal, shellTerminalOpen } = useUIStore();
   const { data: clusters } = useClusters();
   const current = clusters?.find((c) => c.name === contextName);
   const displayName = current?.displayName;
@@ -34,6 +34,18 @@ export function Header({ contextName }: { contextName: string }) {
       </div>
       <div className="no-drag-region flex items-center gap-2">
         <PortForwardIndicator contextName={contextName} />
+        <Button
+          variant={shellTerminalOpen ? "secondary" : "outline"}
+          size="sm"
+          className="gap-1.5 text-muted-foreground"
+          onClick={toggleShellTerminal}
+          title="Toggle terminal (⌘T)"
+        >
+          <Terminal className="h-3.5 w-3.5" />
+          <kbd className="pointer-events-none hidden sm:inline-flex h-5 select-none items-center gap-0.5 rounded border bg-muted px-1.5 font-mono text-[10px] font-medium text-muted-foreground">
+            <span className="text-xs">⌘</span>T
+          </kbd>
+        </Button>
         <Button
           variant="outline"
           size="sm"

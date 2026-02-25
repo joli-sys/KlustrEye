@@ -10,6 +10,7 @@ export async function GET(_req: NextRequest) {
       select: {
         contextName: true,
         displayName: true,
+        lastNamespace: true,
         organizationId: true,
         organization: { select: { id: true, name: true } },
         settings: {
@@ -34,6 +35,7 @@ export async function GET(_req: NextRequest) {
         colorScheme: s?.settings.find((st) => st.key === "colorScheme")?.value ?? null,
         organizationId: s?.organizationId ?? null,
         organizationName: s?.organization?.name ?? null,
+        lastNamespace: s?.lastNamespace ?? "default",
       };
     });
 

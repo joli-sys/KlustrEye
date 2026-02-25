@@ -2,7 +2,7 @@
 
 
 import { useResources, useDeleteResource } from "@/hooks/use-resources";
-import { useUIStore } from "@/lib/stores/ui-store";
+import { useClusterNamespace } from "@/hooks/use-cluster-namespace";
 import { ResourceTable, nameColumn, namespaceColumn, ageColumn, statusBadge } from "@/components/resource-table";
 import { Button } from "@/components/ui/button";
 import { RESOURCE_REGISTRY, RESOURCE_ROUTE_MAP, getResourceHref, type ResourceKind } from "@/lib/constants";
@@ -40,7 +40,7 @@ export function ResourceListPage({
       }
     : undefined;
   const resolvedDetailLinkFn = detailLinkFn ?? defaultDetailLinkFn;
-  const { selectedNamespace } = useUIStore();
+  const selectedNamespace = useClusterNamespace(contextName);
   const ns = entry.namespaced ? (selectedNamespace === "__all__" ? undefined : selectedNamespace) : undefined;
   const { data, isLoading, refetch, isFetching } = useResources(contextName, kind, ns);
   const deleteMutation = useDeleteResource(contextName, kind);

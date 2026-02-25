@@ -26,7 +26,7 @@ function useDebounce(value: string, delay: number) {
 }
 
 export function CommandPalette() {
-  const { commandPaletteOpen, setCommandPaletteOpen, setSelectedNamespace } = useUIStore();
+  const { commandPaletteOpen, setCommandPaletteOpen, setClusterNamespace } = useUIStore();
   const { searches: savedSearches, removeSearch } = useSavedSearches();
   const [query, setQuery] = useState("");
   const [selectedIndex, setSelectedIndex] = useState(0);
@@ -129,13 +129,13 @@ export function CommandPalette() {
 
   const navigate = useCallback(
     (item: PaletteItem) => {
-      if (item.type === "favorite") {
-        setSelectedNamespace(item.namespace ?? "__all__");
+      if (item.type === "favorite" && ctx) {
+        setClusterNamespace(ctx, item.namespace ?? "__all__");
       }
       router.push(item.href);
       setCommandPaletteOpen(false);
     },
-    [router, setCommandPaletteOpen, setSelectedNamespace]
+    [router, setCommandPaletteOpen, setClusterNamespace, ctx]
   );
 
   const handleKeyDown = (e: React.KeyboardEvent) => {

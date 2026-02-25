@@ -3,6 +3,7 @@ import { Header } from "@/components/header";
 import { TabBar } from "@/components/tab-bar";
 import { ClusterColorProvider } from "@/components/cluster-color-provider";
 import { MobileSidebarDrawer } from "@/components/mobile-sidebar-drawer";
+import { ClusterShellTerminal } from "@/components/cluster-shell-terminal";
 
 export default async function ClusterLayout({
   children,
@@ -27,6 +28,7 @@ export default async function ClusterLayout({
           <Header contextName={decodedContext} />
           <TabBar contextName={decodedContext} />
           <main className="flex-1 overflow-auto p-4">{children}</main>
+          <ClusterShellTerminal contextName={decodedContext} />
         </div>
       </div>
     </ClusterColorProvider>

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
+import { useUIStore } from "@/lib/stores/ui-store";
 
 export function useKeyboardShortcuts() {
   useEffect(() => {
@@ -23,6 +24,16 @@ export function useKeyboardShortcuts() {
         }
         e.preventDefault();
         window.dispatchEvent(new CustomEvent("focus-table-filter"));
+      }
+
+      // Cmd+T / Ctrl+T — toggle shell terminal
+      if (e.key === "t" && (e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey) {
+        const target = e.target as HTMLElement;
+        if (target.closest(".monaco-editor")) return;
+        // Also skip if inside an xterm terminal to avoid conflicts
+        if (target.closest(".xterm")) return;
+        e.preventDefault();
+        useUIStore.getState().toggleShellTerminal();
       }
 
       // Cmd+F / Ctrl+F — focus the table/page filter instead of browser find

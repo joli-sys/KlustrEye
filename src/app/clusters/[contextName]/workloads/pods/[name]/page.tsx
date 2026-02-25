@@ -404,12 +404,37 @@ export default function PodDetailPage({ params }: { params: Promise<{ contextNam
   const initContainerStatuses = (status.initContainerStatuses as Record<string, unknown>[]) || [];
   const volumes = (spec.volumes as Record<string, unknown>[]) || [];
 
-  const pvcVolumes = useMemo(() => {
-    return volumes.filter((v) => v.persistentVolumeClaim).map((v) => ({
-      name: v.name as string,
-      claimName: (v.persistentVolumeClaim as Record<string, unknown>).claimName as string,
-    }));
-  }, [volumes]);
+  const volumeInfo = useMemo(() => {
+    const allContainers = [...initContainers, ...containers];
+    return volumes.map((v) => {
+      const vName = v.name as string;
+      const mountedBy: { container: string; mountPath: string; readOnly?: boolean; subPath?: string }[] = [];
+      for (const c of allContainers) {
+        const mounts = (c.volumeMounts as Record<string, unknown>[]) || [];
+        for (const m of mounts) {
+          if (m.name === vName) {
+            mountedBy.push({
+              container: c.name as string,
+              mountPath: m.mountPath as string,
+              readOnly: m.readOnly as boolean | undefined,
+              subPath: m.subPath as string | undefined,
+            });
+          }
+        }
+      }
+      let type = "unknown";
+      let detail: Record<string, unknown> | null = null;
+      if (v.persistentVolumeClaim) { type = "PVC"; detail = v.persistentVolumeClaim as Record<string, unknown>; }
+      else if (v.configMap) { type = "ConfigMap"; detail = v.configMap as Record<string, unknown>; }
+      else if (v.secret) { type = "Secret"; detail = v.secret as Record<string, unknown>; }
+      else if (v.emptyDir !== undefined) { type = "emptyDir"; detail = v.emptyDir as Record<string, unknown>; }
+      else if (v.hostPath) { type = "hostPath"; detail = v.hostPath as Record<string, unknown>; }
+      else if (v.projected) { type = "projected"; }
+      else if (v.downwardAPI) { type = "downwardAPI"; }
+      else if (v.csi) { type = "CSI"; detail = v.csi as Record<string, unknown>; }
+      return { name: vName, type, detail, mountedBy };
+    });
+  }, [volumes, containers, initContainers]);
 
   const containerPorts = useMemo(() => {
     const ports: { name?: string; port: number; protocol?: string }[] = [];
@@ -591,8 +616,11 @@ export default function PodDetailPage({ params }: { params: Promise<{ contextNam
                       : running
                       ? "Running"
                       : "Waiting";
+                    const waiting = stateObj?.waiting as Record<string, unknown> | undefined;
+                    const lastTerminated = (cs?.lastState as Record<string, unknown>)?.terminated as Record<string, unknown> | undefined;
                     const isOk = terminated?.exitCode === 0 || !!running;
                     const restarts = (cs?.restartCount as number) || 0;
+                    const initVolumeMounts = (container.volumeMounts as Record<string, unknown>[]) || [];
 
                     return (
                       <div key={cName} className="p-3 rounded-lg border space-y-2">
@@ -613,6 +641,38 @@ export default function PodDetailPage({ params }: { params: Promise<{ contextNam
                             </Badge>
                           </div>
                         </div>
+                        {!!waiting?.reason && (
+                          <div className="flex items-center gap-2 text-xs">
+                            <Badge variant="warning" className="text-[10px]">{waiting.reason as string}</Badge>
+                            {!!waiting.message && <span className="text-muted-foreground truncate">{waiting.message as string}</span>}
+                          </div>
+                        )}
+                        {lastTerminated && (
+                          <div className="flex items-center gap-2 text-xs">
+                            <span className="text-muted-foreground">Last:</span>
+                            <Badge variant={lastTerminated.exitCode === 0 ? "outline" : "destructive"} className="text-[10px]">
+                              {lastTerminated.reason as string || "Terminated"}
+                            </Badge>
+                            <span className="text-muted-foreground">exit {lastTerminated.exitCode as number}</span>
+                            {!!lastTerminated.finishedAt && (
+                              <span className="text-muted-foreground">{new Date(lastTerminated.finishedAt as string).toLocaleString()}</span>
+                            )}
+                          </div>
+                        )}
+                        {initVolumeMounts.length > 0 && (
+                          <div className="text-xs space-y-0.5 pt-1 border-t">
+                            <span className="text-muted-foreground font-medium">Mounts</span>
+                            {initVolumeMounts.map((vm) => (
+                              <div key={vm.mountPath as string} className="flex items-center gap-2 pl-2">
+                                <span className="font-mono text-muted-foreground">{vm.mountPath as string}</span>
+                                <span className="text-muted-foreground">&larr;</span>
+                                <span className="font-mono">{vm.name as string}</span>
+                                {!!vm.readOnly && <Badge variant="outline" className="text-[10px]">RO</Badge>}
+                                {!!vm.subPath && <span className="text-muted-foreground">sub: {vm.subPath as string}</span>}
+                              </div>
+                            ))}
+                          </div>
+                        )}
                       </div>
                     );
                   })}
@@ -630,6 +690,10 @@ export default function PodDetailPage({ params }: { params: Promise<{ contextNam
                 const requests = resources?.requests as Record<string, string> | undefined;
                 const limits = resources?.limits as Record<string, string> | undefined;
                 const metrics = containerMetrics.get(cName);
+                const stateObj = cs?.state as Record<string, unknown> | undefined;
+                const waiting = stateObj?.waiting as Record<string, unknown> | undefined;
+                const lastTerminated = (cs?.lastState as Record<string, unknown>)?.terminated as Record<string, unknown> | undefined;
+                const appVolumeMounts = (container.volumeMounts as Record<string, unknown>[]) || [];
 
                 return (
                   <div key={cName} className="p-3 rounded-lg border space-y-2">
@@ -649,6 +713,24 @@ export default function PodDetailPage({ params }: { params: Promise<{ contextNam
                         </Badge>
                       </div>
                     </div>
+                    {!!waiting?.reason && (
+                      <div className="flex items-center gap-2 text-xs">
+                        <Badge variant="warning" className="text-[10px]">{waiting.reason as string}</Badge>
+                        {!!waiting.message && <span className="text-muted-foreground truncate">{waiting.message as string}</span>}
+                      </div>
+                    )}
+                    {lastTerminated && (
+                      <div className="flex items-center gap-2 text-xs">
+                        <span className="text-muted-foreground">Last:</span>
+                        <Badge variant={lastTerminated.exitCode === 0 ? "outline" : "destructive"} className="text-[10px]">
+                          {lastTerminated.reason as string || "Terminated"}
+                        </Badge>
+                        <span className="text-muted-foreground">exit {lastTerminated.exitCode as number}</span>
+                        {!!lastTerminated.finishedAt && (
+                          <span className="text-muted-foreground">{new Date(lastTerminated.finishedAt as string).toLocaleString()}</span>
+                        )}
+                      </div>
+                    )}
                     <div className="space-y-1.5 pt-1 border-t">
                       <ResourceRow
                         label="CPU"
@@ -665,6 +747,20 @@ export default function PodDetailPage({ params }: { params: Promise<{ contextNam
                         formatFn={formatBytes}
                       />
                     </div>
+                    {appVolumeMounts.length > 0 && (
+                      <div className="text-xs space-y-0.5 pt-1 border-t">
+                        <span className="text-muted-foreground font-medium">Mounts</span>
+                        {appVolumeMounts.map((vm) => (
+                          <div key={vm.mountPath as string} className="flex items-center gap-2 pl-2">
+                            <span className="font-mono text-muted-foreground">{vm.mountPath as string}</span>
+                            <span className="text-muted-foreground">&larr;</span>
+                            <span className="font-mono">{vm.name as string}</span>
+                            {!!vm.readOnly && <Badge variant="outline" className="text-[10px]">RO</Badge>}
+                            {!!vm.subPath && <span className="text-muted-foreground">sub: {vm.subPath as string}</span>}
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 );
               })}
@@ -672,24 +768,66 @@ export default function PodDetailPage({ params }: { params: Promise<{ contextNam
           </CardContent>
         </Card>
 
-        {pvcVolumes.length > 0 && (
+        {volumeInfo.length > 0 && (
           <Card className="lg:col-span-2">
             <CardHeader>
-              <CardTitle className="text-base">Persistent Volumes</CardTitle>
+              <CardTitle className="text-base">Volumes</CardTitle>
             </CardHeader>
             <CardContent>
               <div className="space-y-2">
-                {pvcVolumes.map((v) => (
-                  <div key={v.name} className="flex items-center justify-between p-2 rounded-md border">
-                    <div>
-                      <span className="text-sm text-muted-foreground">{v.name}</span>
+                {volumeInfo.map((v) => (
+                  <div key={v.name} className="p-2 rounded-md border space-y-1">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-medium">{v.name}</span>
+                        <Badge variant="outline" className="text-[10px]">{v.type}</Badge>
+                      </div>
+                      <div>
+                        {v.type === "PVC" && v.detail && (
+                          <Link
+                            href={`/clusters/${encodeURIComponent(ctx)}/storage/persistentvolumeclaims/${encodeURIComponent(v.detail.claimName as string)}?ns=${encodeURIComponent(namespace)}`}
+                            className="text-primary hover:underline text-sm"
+                          >
+                            {v.detail.claimName as string}
+                          </Link>
+                        )}
+                        {v.type === "ConfigMap" && v.detail && (
+                          <Link
+                            href={`/clusters/${encodeURIComponent(ctx)}/config/configmaps/${encodeURIComponent((v.detail.name as string) || "")}?ns=${encodeURIComponent(namespace)}`}
+                            className="text-primary hover:underline text-sm"
+                          >
+                            {v.detail.name as string}
+                          </Link>
+                        )}
+                        {v.type === "Secret" && v.detail && (
+                          <Link
+                            href={`/clusters/${encodeURIComponent(ctx)}/config/secrets/${encodeURIComponent((v.detail.secretName as string) || "")}?ns=${encodeURIComponent(namespace)}`}
+                            className="text-primary hover:underline text-sm"
+                          >
+                            {v.detail.secretName as string}
+                          </Link>
+                        )}
+                        {v.type === "hostPath" && v.detail && (
+                          <span className="font-mono text-xs text-muted-foreground">{v.detail.path as string}</span>
+                        )}
+                        {v.type === "emptyDir" && !!v.detail?.medium && (
+                          <span className="text-xs text-muted-foreground">{v.detail.medium as string}</span>
+                        )}
+                      </div>
                     </div>
-                    <Link
-                      href={`/clusters/${encodeURIComponent(ctx)}/storage/persistentvolumeclaims/${encodeURIComponent(v.claimName)}?ns=${encodeURIComponent(namespace)}`}
-                      className="text-primary hover:underline text-sm font-medium"
-                    >
-                      {v.claimName}
-                    </Link>
+                    {v.mountedBy.length > 0 && (
+                      <div className="text-xs text-muted-foreground pl-2 space-y-0.5">
+                        {v.mountedBy.map((m) => (
+                          <div key={`${m.container}-${m.mountPath}`} className="flex items-center gap-1">
+                            <span>{m.container}</span>
+                            <span>&rarr;</span>
+                            <span className="font-mono">{m.mountPath}</span>
+                            {m.readOnly && <Badge variant="outline" className="text-[10px]">RO</Badge>}
+                            {m.subPath && <span>sub: {m.subPath}</span>}
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>

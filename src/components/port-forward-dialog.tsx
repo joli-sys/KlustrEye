@@ -51,6 +51,7 @@ export function PortForwardDialog({
         variant: "success",
       });
       onOpenChange(false);
+      window.open(`http://localhost:${port}`, "_blank", "noopener,noreferrer");
     } catch (err) {
       addToast({
         title: "Port forward failed",

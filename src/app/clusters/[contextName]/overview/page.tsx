@@ -4,7 +4,7 @@ import { use, useMemo, useState } from "react";
 import { useClusterInfo } from "@/hooks/use-clusters";
 import { useResources } from "@/hooks/use-resources";
 import { useNodeMetrics } from "@/hooks/use-metrics";
-import { useUIStore } from "@/lib/stores/ui-store";
+import { useClusterNamespace } from "@/hooks/use-cluster-namespace";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -57,7 +57,7 @@ export default function OverviewPage({ params }: { params: Promise<{ contextName
   const { contextName } = use(params);
   const ctx = decodeURIComponent(contextName);
   const { data: clusterInfo, isLoading: infoLoading } = useClusterInfo(ctx);
-  const { selectedNamespace } = useUIStore();
+  const selectedNamespace = useClusterNamespace(ctx);
   const ns = selectedNamespace === "__all__" ? undefined : selectedNamespace;
 
   const [eventsExpanded, setEventsExpanded] = useState(true);

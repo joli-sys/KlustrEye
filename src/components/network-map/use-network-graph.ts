@@ -4,7 +4,7 @@ import { useMemo } from "react";
 import type { Node, Edge } from "@xyflow/react";
 import { useQuery } from "@tanstack/react-query";
 import { useResources } from "@/hooks/use-resources";
-import { useUIStore } from "@/lib/stores/ui-store";
+import { useClusterNamespace } from "@/hooks/use-cluster-namespace";
 
 export interface NetworkNodeData extends Record<string, unknown> {
   label: string;
@@ -79,7 +79,7 @@ function parseTraefikHosts(match: string): string[] {
 }
 
 export function useNetworkGraph(contextName: string) {
-  const { selectedNamespace } = useUIStore();
+  const selectedNamespace = useClusterNamespace(contextName);
   const ns = selectedNamespace === "__all__" ? undefined : selectedNamespace;
 
   const services = useResources(contextName, "services", ns);

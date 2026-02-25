@@ -2,7 +2,7 @@
 
 import { use, useMemo, useState } from "react";
 import { useCRDInstances, useDeleteCRDInstance, useCreateCRDInstance } from "@/hooks/use-crds";
-import { useUIStore } from "@/lib/stores/ui-store";
+import { useClusterNamespace } from "@/hooks/use-cluster-namespace";
 import { ResourceTable, nameColumn, namespaceColumn, ageColumn } from "@/components/resource-table";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/toast";
@@ -28,7 +28,7 @@ export default function CRDInstancesPage({ params }: { params: PageParams }) {
   const scope = searchParams.get("scope") || "Namespaced";
   const router = useRouter();
   const { addToast } = useToast();
-  const { selectedNamespace } = useUIStore();
+  const selectedNamespace = useClusterNamespace(ctx);
 
   const ns = scope === "Namespaced"
     ? (selectedNamespace === "__all__" ? undefined : selectedNamespace)

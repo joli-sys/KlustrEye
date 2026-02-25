@@ -16,6 +16,7 @@ export interface ClusterContext {
   colorScheme: string | null;
   organizationId: string | null;
   organizationName: string | null;
+  lastNamespace: string;
 }
 
 export function useClusters() {

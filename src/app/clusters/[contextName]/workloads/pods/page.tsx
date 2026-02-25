@@ -3,7 +3,7 @@
 import { use, useMemo, useState } from "react";
 import { useResources, useDeleteResource } from "@/hooks/use-resources";
 import { usePodMetrics } from "@/hooks/use-metrics";
-import { useUIStore } from "@/lib/stores/ui-store";
+import { useClusterNamespace } from "@/hooks/use-cluster-namespace";
 import { ResourceTable, nameColumn, namespaceColumn, ageColumn, statusBadge } from "@/components/resource-table";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -39,7 +39,7 @@ export default function PodsPage({ params }: { params: Promise<{ contextName: st
   const { contextName } = use(params);
   const ctx = decodeURIComponent(contextName);
   const router = useRouter();
-  const { selectedNamespace } = useUIStore();
+  const selectedNamespace = useClusterNamespace(ctx);
   const ns = selectedNamespace === "__all__" ? undefined : selectedNamespace;
   const { data, isLoading, refetch, isFetching } = useResources(ctx, "pods", ns);
   const { data: metricsData } = usePodMetrics(ctx, ns);
