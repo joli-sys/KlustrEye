@@ -1,5 +1,10 @@
 import { execFile } from "child_process";
 import { promisify } from "util";
+import { writeFile, unlink } from "fs/promises";
+import { tmpdir } from "os";
+import { join } from "path";
+import { gunzipSync } from "zlib";
+import { getCoreApi } from "./client";
 
 const execFileAsync = promisify(execFile);
 
@@ -81,6 +86,73 @@ export async function getReleaseHistory(
   return JSON.parse(output || "[]");
 }
 
+/**
+ * Resolve the chart reference and version for an installed release.
+ * Reads the chart name/version from the Helm release secret, then
+ * searches configured repos for the full repo/chart reference.
+ * Returns { chartRef, version }.
+ */
+async function resolveChartRef(
+  contextName: string,
+  name: string,
+  namespace: string
+): Promise<{ chartRef: string; version: string }> {
+  // Get current revision from helm list
+  const listOut = await helm(
+    ["list", "--filter", `^${name}$`, "--namespace", namespace, "--output", "json"],
+    contextName
+  );
+  const releases = JSON.parse(listOut || "[]");
+  const revision = releases[0]?.revision;
+  if (!revision) {
+    throw new Error(`Release "${name}" not found in namespace "${namespace}"`);
+  }
+
+  // Read chart metadata from the release secret
+  const api = getCoreApi(contextName);
+  const secretName = `sh.helm.release.v1.${name}.v${revision}`;
+  const secret = await api.readNamespacedSecret({ name: secretName, namespace });
+  const releaseB64 = secret.data?.release;
+  if (!releaseB64) {
+    throw new Error(`Helm release secret "${secretName}" has no release data`);
+  }
+
+  const outer = Buffer.from(releaseB64, "base64");
+  const inner = Buffer.from(outer.toString("utf-8"), "base64");
+  const json = gunzipSync(inner).toString("utf-8");
+  const release = JSON.parse(json);
+  const chartName = release?.chart?.metadata?.name;
+  const chartVersion = release?.chart?.metadata?.version;
+
+  if (!chartName) {
+    throw new Error("Chart metadata missing in release secret");
+  }
+
+  // Search configured repos for the full repo/chart reference
+  try {
+    const searchOut = await helm(
+      ["search", "repo", chartName, "--version", chartVersion || "", "--output", "json"],
+      contextName
+    );
+    const results = JSON.parse(searchOut || "[]") as { name: string; version: string }[];
+    const exact = results.find(
+      (r) => (r.name === chartName || r.name.endsWith(`/${chartName}`)) &&
+             (!chartVersion || r.version === chartVersion)
+    );
+    if (exact) return { chartRef: exact.name, version: exact.version };
+    // Fallback: match by name only
+    const byName = results.find((r) => r.name === chartName || r.name.endsWith(`/${chartName}`));
+    if (byName) return { chartRef: byName.name, version: chartVersion || byName.version };
+  } catch {
+    // repo search failed
+  }
+
+  throw new Error(
+    `Chart "${chartName}" (version ${chartVersion || "unknown"}) not found in any configured Helm repo. ` +
+    `Add the repo with "helm repo add" and try again.`
+  );
+}
+
 export async function installChart(
   contextName: string,
   releaseName: string,
@@ -107,20 +179,59 @@ export async function installChart(
 export async function upgradeRelease(
   contextName: string,
   name: string,
-  chart: string,
+  chart: string | undefined,
   namespace: string,
-  values?: Record<string, unknown>,
+  valuesYaml?: string,
   version?: string
 ): Promise<string> {
-  const args = ["upgrade", name, chart, "--namespace", namespace, "--output", "json"];
-  if (version) args.push("--version", version);
-  if (values) {
-    for (const [key, val] of Object.entries(values)) {
-      args.push("--set", `${key}=${val}`);
-    }
-  }
+  let tmpFile: string | undefined;
 
-  return helm(args, contextName);
+  try {
+    let chartRef = chart;
+    let chartVersion = version;
+    if (!chartRef) {
+      const resolved = await resolveChartRef(contextName, name, namespace);
+      chartRef = resolved.chartRef;
+      chartVersion = chartVersion || resolved.version;
+    }
+
+    const args = ["upgrade", name, chartRef, "--namespace", namespace, "--atomic", "--output", "json"];
+    if (chartVersion) args.push("--version", chartVersion);
+
+    if (valuesYaml) {
+      tmpFile = join(tmpdir(), `helm-values-${Date.now()}-${Math.random().toString(36).slice(2)}.yaml`);
+      await writeFile(tmpFile, valuesYaml, "utf-8");
+      args.push("--values", tmpFile);
+    }
+
+    return await helm(args, contextName);
+  } finally {
+    if (tmpFile) await unlink(tmpFile).catch(() => {});
+  }
+}
+
+export async function templateRelease(
+  contextName: string,
+  name: string,
+  namespace: string,
+  valuesYaml?: string
+): Promise<string> {
+  let tmpFile: string | undefined;
+
+  try {
+    const { chartRef, version } = await resolveChartRef(contextName, name, namespace);
+    const args = ["template", name, chartRef, "--namespace", namespace, "--version", version];
+
+    if (valuesYaml) {
+      tmpFile = join(tmpdir(), `helm-values-${Date.now()}-${Math.random().toString(36).slice(2)}.yaml`);
+      await writeFile(tmpFile, valuesYaml, "utf-8");
+      args.push("--values", tmpFile);
+    }
+
+    return await helm(args, contextName);
+  } finally {
+    if (tmpFile) await unlink(tmpFile).catch(() => {});
+  }
 }
 
 export async function uninstallRelease(

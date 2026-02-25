@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getRelease, getReleaseHistory, uninstallRelease, rollbackRelease } from "@/lib/k8s/helm";
+import { getRelease, getReleaseHistory, uninstallRelease, rollbackRelease, upgradeRelease, templateRelease } from "@/lib/k8s/helm";
 
 export async function GET(
   req: NextRequest,
@@ -29,15 +29,25 @@ export async function PUT(
 ) {
   const { contextName, name } = await params;
   const body = await req.json();
-  const { namespace, revision } = body;
+  const { namespace, revision, action, chart, valuesYaml, version } = body;
 
   try {
+    if (action === "dry-run") {
+      const manifest = await templateRelease(contextName, name, namespace, valuesYaml);
+      return NextResponse.json({ ok: true, manifest });
+    }
+
+    if (action === "upgrade") {
+      const result = await upgradeRelease(contextName, name, chart, namespace, valuesYaml, version);
+      return NextResponse.json({ ok: true, output: result });
+    }
+
     if (revision) {
       const result = await rollbackRelease(contextName, name, namespace, revision);
       return NextResponse.json({ ok: true, output: result });
     }
 
-    return NextResponse.json({ error: "Specify revision for rollback" }, { status: 400 });
+    return NextResponse.json({ error: "Specify action or revision" }, { status: 400 });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : "Failed to update release";
     return NextResponse.json({ error: message }, { status: 500 });

@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { YamlEditor } from "@/components/yaml-editor";
 import { useToast } from "@/components/ui/toast";
-import { ArrowLeft, RotateCcw } from "lucide-react";
+import { ArrowLeft, Eye, RotateCcw, Save, Undo2 } from "lucide-react";
 import { stringify } from "yaml";
 import type { ColumnDef } from "@tanstack/react-table";
 
@@ -37,6 +37,8 @@ export default function HelmReleasePage({
   const queryClient = useQueryClient();
   const { addToast } = useToast();
   const [tab, setTab] = useState("overview");
+  const [editedValues, setEditedValues] = useState<string | null>(null);
+  const [previewManifest, setPreviewManifest] = useState<string | null>(null);
 
   const { data: release, isLoading } = useQuery({
     queryKey: ["helm-release", ctx, releaseName, namespace],
@@ -80,6 +82,67 @@ export default function HelmReleasePage({
     },
     onError: (err) => {
       addToast({ title: "Rollback failed", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const upgrade = useMutation({
+    mutationFn: async (valuesYaml: string) => {
+      const res = await fetch(
+        `/api/clusters/${encodeURIComponent(ctx)}/helm/releases/${encodeURIComponent(releaseName)}`,
+        {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            namespace,
+            action: "upgrade",
+            valuesYaml,
+          }),
+        }
+      );
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || "Upgrade failed");
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["helm-release", ctx, releaseName] });
+      queryClient.invalidateQueries({ queryKey: ["helm-history", ctx, releaseName] });
+      setEditedValues(null);
+      setPreviewManifest(null);
+      addToast({ title: "Upgrade successful", variant: "success" });
+    },
+    onError: (err) => {
+      addToast({ title: "Upgrade failed", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const dryRun = useMutation({
+    mutationFn: async (valuesYaml: string) => {
+      const res = await fetch(
+        `/api/clusters/${encodeURIComponent(ctx)}/helm/releases/${encodeURIComponent(releaseName)}`,
+        {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            namespace,
+            action: "dry-run",
+            valuesYaml,
+          }),
+        }
+      );
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || "Dry-run failed");
+      }
+      return res.json();
+    },
+    onSuccess: (data) => {
+      setPreviewManifest(data.manifest);
+      setTab("manifest");
+    },
+    onError: (err) => {
+      addToast({ title: "Preview failed", description: err.message, variant: "destructive" });
     },
   });
 
@@ -192,11 +255,75 @@ export default function HelmReleasePage({
           </TabsContent>
 
           <TabsContent value="values">
-            <YamlEditor value={valuesYaml} readOnly height="600px" />
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <p className="text-sm text-muted-foreground">
+                  {editedValues !== null ? "Editing values — save to upgrade the release" : "User-supplied values"}
+                </p>
+                <div className="flex items-center gap-2">
+                  {editedValues !== null && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => { setEditedValues(null); setPreviewManifest(null); }}
+                      className="gap-1.5"
+                    >
+                      <Undo2 className="h-3.5 w-3.5" />
+                      Reset
+                    </Button>
+                  )}
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={dryRun.isPending}
+                    onClick={() => {
+                      dryRun.mutate(editedValues ?? valuesYaml);
+                    }}
+                    className="gap-1.5"
+                  >
+                    <Eye className="h-3.5 w-3.5" />
+                    {dryRun.isPending ? "Rendering..." : "Preview Manifest"}
+                  </Button>
+                  <Button
+                    size="sm"
+                    disabled={upgrade.isPending}
+                    onClick={() => {
+                      const vals = editedValues ?? valuesYaml;
+                      if (confirm(`Upgrade "${releaseName}" with the ${editedValues !== null ? "edited" : "current"} values?`)) {
+                        upgrade.mutate(vals);
+                      }
+                    }}
+                    className="gap-1.5"
+                  >
+                    <Save className="h-3.5 w-3.5" />
+                    {upgrade.isPending ? "Upgrading..." : "Save & Upgrade"}
+                  </Button>
+                </div>
+              </div>
+              <YamlEditor
+                value={editedValues ?? valuesYaml}
+                onChange={(val) => setEditedValues(val ?? "")}
+                height="600px"
+              />
+            </div>
           </TabsContent>
 
           <TabsContent value="manifest">
-            <YamlEditor value={release.manifest || "# No manifest"} readOnly height="600px" />
+            {previewManifest !== null && (
+              <div className="flex items-center justify-between rounded-md border border-yellow-500/30 bg-yellow-500/10 px-3 py-2 mb-2 text-sm">
+                <span className="text-yellow-600 dark:text-yellow-400">
+                  Showing dry-run preview — this has not been applied
+                </span>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setPreviewManifest(null)}
+                >
+                  Show deployed
+                </Button>
+              </div>
+            )}
+            <YamlEditor value={previewManifest ?? release.manifest ?? "# No manifest"} readOnly height="600px" />
           </TabsContent>
 
           <TabsContent value="history">
