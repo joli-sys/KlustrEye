@@ -15,6 +15,7 @@ import {
   Network, Globe, FileText, KeyRound, UserCog, HardDrive, Activity, Anchor,
   Puzzle, Cable, Share2, ShieldCheck, ArrowUpDown, SlidersHorizontal,
   PanelLeftClose, PanelLeft, Settings, BarChart3, Star, X,
+  Shield, UserCheck, UsersRound,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { getPluginsWithPages } from "@/lib/plugins/registry";
@@ -23,6 +24,7 @@ const iconMap: Record<string, React.ComponentType<{ className?: string }>> = {
   LayoutDashboard, Server, Box, Layers, Database, Cpu, Copy, Play, Clock,
   Network, Globe, FileText, KeyRound, UserCog, HardDrive, Activity, Anchor,
   Puzzle, Cable, Share2, ShieldCheck, ArrowUpDown, SlidersHorizontal, Settings, BarChart3,
+  Shield, UserCheck, UsersRound,
 };
 
 const pagePlugins = getPluginsWithPages();
@@ -30,7 +32,7 @@ const pagePlugins = getPluginsWithPages();
 export function Sidebar({ contextName, onNavigate, forceExpanded }: { contextName: string; onNavigate?: () => void; forceExpanded?: boolean }) {
   const pathname = usePathname();
   const router = useRouter();
-  const { sidebarOpen: _sidebarOpen, toggleSidebar, setSelectedNamespace } = useUIStore();
+  const { sidebarOpen: _sidebarOpen, toggleSidebar, setClusterNamespace } = useUIStore();
   const sidebarOpen = forceExpanded ?? _sidebarOpen;
   const { openTab } = useTabStore();
   const { searches: savedSearches, removeSearch } = useSavedSearches();
@@ -176,7 +178,7 @@ export function Sidebar({ contextName, onNavigate, forceExpanded }: { contextNam
                   className="group flex items-center gap-1 mx-1 rounded-md text-sm text-muted-foreground hover:bg-accent/50 hover:text-foreground transition-colors cursor-pointer"
                   title={tooltip}
                   onClick={() => {
-                    if (s.namespace) setSelectedNamespace(s.namespace);
+                    if (s.namespace) setClusterNamespace(contextName, s.namespace);
                     router.push(href);
                     onNavigate?.();
                   }}

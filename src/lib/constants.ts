@@ -16,14 +16,18 @@ export type ResourceKind =
   | "serviceaccounts"
   | "poddisruptionbudgets"
   | "horizontalpodautoscalers"
-  | "events";
+  | "events"
+  | "roles"
+  | "clusterroles"
+  | "rolebindings"
+  | "clusterrolebindings";
 
 export interface ResourceRegistryEntry {
   kind: string;
   apiVersion: string;
   plural: string;
   namespaced: boolean;
-  group: "workloads" | "network" | "config" | "storage" | "cluster";
+  group: "workloads" | "network" | "config" | "storage" | "cluster" | "access";
   label: string;
   labelPlural: string;
   listFn: string;
@@ -210,6 +214,46 @@ export const RESOURCE_REGISTRY: Record<ResourceKind, ResourceRegistryEntry> = {
     labelPlural: "Events",
     listFn: "listNamespacedEvent",
   },
+  roles: {
+    kind: "Role",
+    apiVersion: "rbac.authorization.k8s.io/v1",
+    plural: "roles",
+    namespaced: true,
+    group: "access",
+    label: "Role",
+    labelPlural: "Roles",
+    listFn: "listNamespacedRole",
+  },
+  clusterroles: {
+    kind: "ClusterRole",
+    apiVersion: "rbac.authorization.k8s.io/v1",
+    plural: "clusterroles",
+    namespaced: false,
+    group: "access",
+    label: "ClusterRole",
+    labelPlural: "ClusterRoles",
+    listFn: "listClusterRole",
+  },
+  rolebindings: {
+    kind: "RoleBinding",
+    apiVersion: "rbac.authorization.k8s.io/v1",
+    plural: "rolebindings",
+    namespaced: true,
+    group: "access",
+    label: "RoleBinding",
+    labelPlural: "RoleBindings",
+    listFn: "listNamespacedRoleBinding",
+  },
+  clusterrolebindings: {
+    kind: "ClusterRoleBinding",
+    apiVersion: "rbac.authorization.k8s.io/v1",
+    plural: "clusterrolebindings",
+    namespaced: false,
+    group: "access",
+    label: "ClusterRoleBinding",
+    labelPlural: "ClusterRoleBindings",
+    listFn: "listClusterRoleBinding",
+  },
 };
 
 export const RESOURCE_ROUTE_MAP: Record<
@@ -234,6 +278,10 @@ export const RESOURCE_ROUTE_MAP: Record<
   nodes: { path: "nodes", hasDetail: true },
   namespaces: { path: "namespaces", hasDetail: false },
   events: { path: "events", hasDetail: false },
+  roles: { path: "access/roles", hasDetail: true },
+  clusterroles: { path: "access/clusterroles", hasDetail: true },
+  rolebindings: { path: "access/rolebindings", hasDetail: true },
+  clusterrolebindings: { path: "access/clusterrolebindings", hasDetail: true },
 };
 
 export function getResourceHref(
@@ -295,6 +343,15 @@ export const SIDEBAR_SECTIONS = [
     title: "Storage",
     items: [
       { label: "PVCs", href: "storage/persistentvolumeclaims", icon: "HardDrive" },
+    ],
+  },
+  {
+    title: "Access",
+    items: [
+      { label: "Roles", href: "access/roles", icon: "Shield" },
+      { label: "ClusterRoles", href: "access/clusterroles", icon: "ShieldCheck" },
+      { label: "RoleBindings", href: "access/rolebindings", icon: "UserCheck" },
+      { label: "ClusterRoleBindings", href: "access/clusterrolebindings", icon: "UsersRound" },
     ],
   },
   {
