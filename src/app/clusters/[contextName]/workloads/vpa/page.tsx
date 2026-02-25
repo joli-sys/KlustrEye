@@ -2,10 +2,11 @@
 
 import { use } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { useUIStore } from "@/lib/stores/ui-store";
+import { useClusterNamespace } from "@/hooks/use-cluster-namespace";
 import { ResourceTable, nameColumn, namespaceColumn, ageColumn } from "@/components/resource-table";
 import { Button } from "@/components/ui/button";
 import { RefreshCw } from "lucide-react";
+import { parseMemoryValue, formatBytes } from "@/lib/utils";
 import type { ColumnDef } from "@tanstack/react-table";
 
 function useVPAs(contextName: string, namespace?: string) {
@@ -66,7 +67,8 @@ const columns: ColumnDef<Record<string, unknown>>[] = [
       const containers = rec?.containerRecommendations as Record<string, unknown>[] | undefined;
       if (!containers || containers.length === 0) return "-";
       const target = containers[0].target as Record<string, string> | undefined;
-      return target?.memory ?? "-";
+      if (!target?.memory) return "-";
+      return formatBytes(parseMemoryValue(target.memory));
     },
   },
   ageColumn(),
@@ -75,7 +77,7 @@ const columns: ColumnDef<Record<string, unknown>>[] = [
 export default function VPAPage({ params }: { params: Promise<{ contextName: string }> }) {
   const { contextName } = use(params);
   const ctx = decodeURIComponent(contextName);
-  const { selectedNamespace } = useUIStore();
+  const selectedNamespace = useClusterNamespace(ctx);
   const ns = selectedNamespace === "__all__" ? undefined : selectedNamespace;
   const { data, isLoading, refetch, isFetching } = useVPAs(ctx, ns);
 
