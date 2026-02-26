@@ -25,7 +25,9 @@ A web-based Kubernetes IDE built with Next.js, React, and TypeScript. Connect to
 - **Cloud provider detection** — automatically detects EKS, GKE, and AKS clusters from server URLs and version strings, with provider icons on the home page and overview
 - **Per-cluster color schemes** — 16 color presets across the OKLCH color wheel for visually distinguishing clusters
 - **Cluster renaming** — set custom display names for clusters
-- **Sidebar cluster switcher** — quickly switch between clusters, grouped by organization
+- **Sidebar cluster switcher** — quickly switch between clusters, grouped by organization, with search filter and scrollable dropdown for large cluster lists
+- **Default namespace** — configurable default namespace per cluster via settings page
+- **Cluster shell terminal** — open a local shell scoped to a cluster context (node-pty + WebSocket backend)
 
 ### Workload Management
 - **Resource browsing** — view Deployments, StatefulSets, DaemonSets, ReplicaSets, Pods, Jobs, CronJobs, Services, Ingresses, ConfigMaps, Secrets, PVCs, ServiceAccounts, and Nodes
@@ -33,21 +35,27 @@ A web-based Kubernetes IDE built with Next.js, React, and TypeScript. Connect to
 - **YAML editing** — edit any resource with a full Monaco Editor with syntax highlighting
 - **Resource creation** — create resources from YAML templates
 - **Resource detail pages** — detailed view with metadata, events, and YAML tabs
+- **Init containers** — view init container status and logs on pod detail pages
+- **PVC-pod cross-references** — PVC detail shows bound PV and consuming pods; pod detail lists PVC-backed volumes with links
+- **Owner references** — resource detail metadata shows "Controlled By" links to parent resources
+- **Secret value reveal** — click eye icon on pod env vars to lazy-fetch and decode base64 secret values inline, including envFrom secretRef expansion
+- **RBAC Access** — browse and inspect Roles, ClusterRoles, RoleBindings, and ClusterRoleBindings
 
 ### Helm
 - **Release management** — list, install, and uninstall Helm releases
 - **Release detail page** — click any release to see:
   - **Overview** — status, revision, chart version, app version, last deployed time, description, and release notes
-  - **Values** — deployed user-supplied values in a read-only Monaco YAML editor
+  - **Values** — editable YAML editor with **Preview Manifest** (dry-run via `helm template`) and **Save & Upgrade** (uses `--atomic` for automatic rollback on failure)
   - **Manifest** — full rendered manifest in a read-only Monaco YAML editor
   - **History** — revision history table with status badges and one-click rollback
 
 ### Monitoring & Debugging
-- **Pod logs** — real-time log streaming with search and filtering
+- **Pod logs** — true real-time streaming via `@kubernetes/client-node` Log API (not polling) with search and filtering
 - **Pod terminal** — interactive terminal sessions via xterm.js and WebSocket
 - **Node and pod metrics** — CPU and memory usage from metrics-server
 - **Historical metrics** — Grafana/Mimir integration for historical CPU and memory charts on pod and node detail pages
-- **Events** — cluster-wide and resource-scoped event viewing with expandable messages (click to show full text)
+- **Events** — cluster-wide and resource-scoped event viewing with expandable messages and sortable columns
+- **Port forwarding** — create port forwards with automatic browser open
 
 ### Plugin System
 - **Dynamic plugin architecture** — drop-in plugin directories under `src/plugins/` with auto-discovery
@@ -67,9 +75,16 @@ A web-based Kubernetes IDE built with Next.js, React, and TypeScript. Connect to
 - **URL-synced filters** — resource table filter is stored in the `?filter=` URL parameter, so it survives tab switches and back navigation
 - **Deterministic back navigation** — back button navigates to the computed parent list URL (preserving filters) instead of unpredictable browser history
 - **Command palette** — quick navigation to any page or resource
-- **Global resource search** — search across all resource types in a cluster
-- **Favorite searches** — save frequently used filter queries and access them from the command palette
+- **Global resource search** — search across all resource types in a cluster (Cmd+F focuses filter input)
+- **Saved searches** — save frequently used filter queries, accessible from the sidebar and command palette
 - **Custom Resource Definitions** — browse and manage CRDs and their instances
+- **Keyboard shortcuts** — Cmd+T / Ctrl+T to open cluster shell terminal
+
+### Responsive Design
+- **Mobile sidebar** — off-canvas drawer with backdrop on small screens (hamburger menu on < md)
+- **Adaptive tables** — responsive column hiding (CPU/Memory at lg, Namespace/Node at xl)
+- **Responsive layout** — compact header, stacking elements, and full-width filters on mobile
+- **Electron window dragging** — draggable header regions for desktop app
 
 ## Tech Stack
 
@@ -146,16 +161,19 @@ src/
       network/               # Services, Ingresses, Network Map
       config/                # ConfigMaps, Secrets, ServiceAccounts
       storage/               # PVCs
+      access/                # RBAC — Roles, ClusterRoles, Bindings
       helm/                  # Helm releases list + detail
       events/                # Cluster events
-      settings/              # Per-cluster settings
+      settings/              # Per-cluster settings (color, namespace)
       nodes/                 # Node list + detail
       crds/                  # Custom Resource Definitions
     page.tsx                 # Home page (cluster grid)
   components/
     ui/                      # Base UI primitives (shadcn/ui pattern)
-    cluster-switcher.tsx     # Sidebar cluster dropdown
+    cluster-switcher.tsx     # Sidebar cluster dropdown with filter
+    cluster-shell-terminal.tsx # Cluster-scoped shell terminal
     cloud-provider-icon.tsx  # EKS/GKE/AKS/K8s SVG icons
+    mobile-sidebar-drawer.tsx # Off-canvas sidebar for mobile
     manage-organizations-dialog.tsx
     rename-context-dialog.tsx
     network-map/             # Network topology diagram (React Flow)
