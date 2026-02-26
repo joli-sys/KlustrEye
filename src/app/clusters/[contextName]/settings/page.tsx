@@ -7,7 +7,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { useToast } from "@/components/ui/toast";
-import { useClusters } from "@/hooks/use-clusters";
+import { useClusters, useNamespaces } from "@/hooks/use-clusters";
+import { useUIStore } from "@/lib/stores/ui-store";
 import { getPlugins } from "@/lib/plugins/registry";
 import { COLOR_PRESETS, DEFAULT_COLOR_SCHEME } from "@/lib/color-presets";
 import { Check } from "lucide-react";
@@ -23,6 +24,10 @@ export default function SettingsPage({ params }: { params: Promise<{ contextName
   const queryClient = useQueryClient();
   const { data: clusters } = useClusters();
   const currentCluster = clusters?.find((c) => c.name === ctx);
+  const { data: namespaces } = useNamespaces(ctx);
+  const setClusterNamespace = useUIStore((s) => s.setClusterNamespace);
+  const currentNs = useUIStore((s) => s.namespaceByCluster[ctx]) ?? currentCluster?.lastNamespace ?? "default";
+  const [savingNs, setSavingNs] = useState(false);
   const [selectedColor, setSelectedColor] = useState<string | null>(null);
   const [savingColor, setSavingColor] = useState(false);
 
@@ -35,6 +40,28 @@ export default function SettingsPage({ params }: { params: Promise<{ contextName
 
   const handleSave = () => {
     addToast({ title: "Settings saved", variant: "success" });
+  };
+
+  const handleSaveNamespace = async (value: string) => {
+    setSavingNs(true);
+    try {
+      setClusterNamespace(ctx, value);
+      const res = await fetch(
+        `/api/clusters/${encodeURIComponent(ctx)}/settings/namespace`,
+        {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ namespace: value }),
+        }
+      );
+      if (!res.ok) throw new Error("Failed to save");
+      await queryClient.invalidateQueries({ queryKey: ["clusters"] });
+      addToast({ title: "Default namespace saved", variant: "success" });
+    } catch {
+      addToast({ title: "Failed to save namespace", variant: "destructive" });
+    } finally {
+      setSavingNs(false);
+    }
   };
 
   const handleSaveColor = async () => {
@@ -91,6 +118,28 @@ export default function SettingsPage({ params }: { params: Promise<{ contextName
           <Button onClick={handleSaveColor} disabled={savingColor} size="sm">
             {savingColor ? "Saving..." : "Save Color"}
           </Button>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Default Namespace</CardTitle>
+          <CardDescription>Namespace selected when you open this cluster</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <Select
+            value={currentNs}
+            onChange={(e) => handleSaveNamespace(e.target.value)}
+            disabled={savingNs}
+            options={[
+              { value: "__all__", label: "All Namespaces" },
+              ...(namespaces || []).map((n) => ({
+                value: n.name,
+                label: n.name,
+              })),
+            ]}
+            className="w-48"
+          />
         </CardContent>
       </Card>
 

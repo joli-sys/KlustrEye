@@ -6,7 +6,7 @@ import { useClusters } from "@/hooks/use-clusters";
 import { RenameContextDialog } from "@/components/rename-context-dialog";
 import { cn } from "@/lib/utils";
 import { COLOR_PRESETS, DEFAULT_COLOR_SCHEME } from "@/lib/color-presets";
-import { Server, ChevronDown, Check, Pencil } from "lucide-react";
+import { Server, ChevronDown, Check, Pencil, Search } from "lucide-react";
 import type { ClusterContext } from "@/hooks/use-clusters";
 
 interface ClusterSwitcherProps {
@@ -19,12 +19,14 @@ export function ClusterSwitcher({
   sidebarOpen,
 }: ClusterSwitcherProps) {
   const [open, setOpen] = useState(false);
+  const [filter, setFilter] = useState("");
   const [renameCtx, setRenameCtx] = useState<{
     name: string;
     displayName: string | null;
     organizationId: string | null;
   } | null>(null);
   const ref = useRef<HTMLDivElement>(null);
+  const filterInputRef = useRef<HTMLInputElement>(null);
   const pathname = usePathname();
   const router = useRouter();
   const { data: clusters } = useClusters();
@@ -56,6 +58,41 @@ export function ClusterSwitcher({
 
     return entries.map(([, group]) => group);
   }, [clusters]);
+
+  const filterLower = filter.toLowerCase();
+
+  const filteredClusters = useMemo(() => {
+    if (!clusters || !filter) return clusters;
+    return clusters.filter(
+      (c) =>
+        (c.displayName || c.name).toLowerCase().includes(filterLower) ||
+        c.name.toLowerCase().includes(filterLower)
+    );
+  }, [clusters, filterLower]);
+
+  const filteredGrouped = useMemo(() => {
+    if (!filter) return grouped;
+    return grouped
+      .map((group) => ({
+        ...group,
+        clusters: group.clusters.filter(
+          (c) =>
+            (c.displayName || c.name).toLowerCase().includes(filterLower) ||
+            c.name.toLowerCase().includes(filterLower)
+        ),
+      }))
+      .filter((group) => group.clusters.length > 0);
+  }, [grouped, filter, filterLower]);
+
+  useEffect(() => {
+    if (!open) setFilter("");
+  }, [open]);
+
+  useEffect(() => {
+    if (open) {
+      requestAnimationFrame(() => filterInputRef.current?.focus());
+    }
+  }, [open]);
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -157,23 +194,50 @@ export function ClusterSwitcher({
               : "left-full top-0 ml-1"
           )}
         >
-          {!hasOrgs && (
-            <>
-              <div className="px-3 py-1.5 text-xs font-semibold text-muted-foreground uppercase">
-                Clusters
+          {(clusters?.length ?? 0) > 5 && (
+            <div className="px-2 pb-1 pt-1">
+              <div className="flex items-center gap-2 px-2 py-1.5 rounded-md border bg-background">
+                <Search className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                <input
+                  ref={filterInputRef}
+                  type="text"
+                  value={filter}
+                  onChange={(e) => setFilter(e.target.value)}
+                  placeholder="Filter clusters..."
+                  className="flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
+                />
               </div>
-              {clusters?.map(renderClusterItem)}
-            </>
+            </div>
           )}
-          {hasOrgs &&
-            grouped.map((group) => (
-              <div key={group.name ?? "__ungrouped"}>
+          <div className="max-h-[60vh] overflow-y-auto">
+            {!hasOrgs && (
+              <>
                 <div className="px-3 py-1.5 text-xs font-semibold text-muted-foreground uppercase">
-                  {group.name ?? "Ungrouped"}
+                  Clusters
                 </div>
-                {group.clusters.map(renderClusterItem)}
+                {filteredClusters?.map(renderClusterItem)}
+                {filteredClusters?.length === 0 && (
+                  <div className="px-3 py-2 text-sm text-muted-foreground">
+                    No clusters found
+                  </div>
+                )}
+              </>
+            )}
+            {hasOrgs &&
+              filteredGrouped.map((group) => (
+                <div key={group.name ?? "__ungrouped"}>
+                  <div className="px-3 py-1.5 text-xs font-semibold text-muted-foreground uppercase">
+                    {group.name ?? "Ungrouped"}
+                  </div>
+                  {group.clusters.map(renderClusterItem)}
+                </div>
+              ))}
+            {hasOrgs && filteredGrouped.length === 0 && filter && (
+              <div className="px-3 py-2 text-sm text-muted-foreground">
+                No clusters found
               </div>
-            ))}
+            )}
+          </div>
         </div>
       )}
 
