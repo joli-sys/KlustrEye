@@ -26,40 +26,38 @@ import { useUIStore } from "@/lib/stores/ui-store";
 import Link from "next/link";
 
 const globalFilterFn: FilterFn<Record<string, unknown>> = (row, _columnId, filterValue) => {
-  const query = String(filterValue).toLowerCase();
-  if (!query) return true;
+  const raw = String(filterValue).toLowerCase();
+  if (!raw) return true;
 
-  // Match visible column text
-  for (const cell of row.getVisibleCells()) {
-    const value = cell.getValue();
-    if (value != null && String(value).toLowerCase().includes(query)) {
-      return true;
-    }
-  }
+  const terms = raw.split("|").map((t) => t.trim()).filter(Boolean);
+  if (terms.length === 0) return true;
 
-  // Match labels
   const metadata = row.original.metadata as Record<string, unknown> | undefined;
-  if (metadata) {
-    const labels = metadata.labels as Record<string, string> | undefined;
-    if (labels) {
-      for (const [k, v] of Object.entries(labels)) {
-        if (k.toLowerCase().includes(query) || String(v).toLowerCase().includes(query)) {
-          return true;
-        }
+  const labels = (metadata?.labels ?? {}) as Record<string, string>;
+  const annotations = (metadata?.annotations ?? {}) as Record<string, string>;
+
+  return terms.every((term) => {
+    // Match visible column text
+    for (const cell of row.getVisibleCells()) {
+      const value = cell.getValue();
+      if (value != null && String(value).toLowerCase().includes(term)) {
+        return true;
+      }
+    }
+    // Match labels
+    for (const [k, v] of Object.entries(labels)) {
+      if (k.toLowerCase().includes(term) || String(v).toLowerCase().includes(term)) {
+        return true;
       }
     }
     // Match annotations
-    const annotations = metadata.annotations as Record<string, string> | undefined;
-    if (annotations) {
-      for (const [k, v] of Object.entries(annotations)) {
-        if (k.toLowerCase().includes(query) || String(v).toLowerCase().includes(query)) {
-          return true;
-        }
+    for (const [k, v] of Object.entries(annotations)) {
+      if (k.toLowerCase().includes(term) || String(v).toLowerCase().includes(term)) {
+        return true;
       }
     }
-  }
-
-  return false;
+    return false;
+  });
 };
 
 interface ResourceTableProps {
@@ -286,7 +284,7 @@ export function ResourceTable({
         <div className="relative max-w-sm">
           <Input
             ref={filterInputRef}
-            placeholder={`Filter ${kind}...`}
+            placeholder={`Filter ${kind}... (| to combine)`}
             value={globalFilter}
             onChange={(e) => handleFilterChange(e.target.value)}
             className="pr-8"
