@@ -25,7 +25,7 @@ A web-based Kubernetes IDE built with Next.js, React, and TypeScript. Connect to
 - **Cloud provider detection** — automatically detects EKS, GKE, and AKS clusters from server URLs and version strings, with provider icons on the home page and overview
 - **Per-cluster color schemes** — 16 color presets across the OKLCH color wheel for visually distinguishing clusters
 - **Cluster renaming** — set custom display names for clusters
-- **Sidebar cluster switcher** — quickly switch between clusters, grouped by organization, with search filter and scrollable dropdown for large cluster lists
+- **Sidebar cluster switcher** — quickly switch between clusters, grouped by organization, with search filter, scrollable dropdown, and full keyboard navigation (Arrow keys, Enter, Escape)
 - **Default namespace** — configurable default namespace per cluster via settings page
 - **Cluster shell terminal** — open a local shell scoped to a cluster context (node-pty + WebSocket backend)
 
@@ -72,6 +72,7 @@ A web-based Kubernetes IDE built with Next.js, React, and TypeScript. Connect to
 
 ### Search & Navigation
 - **Browser-style tabs** — Ctrl/Cmd+click or middle-click any link to open in a new tab; tab bar appears automatically with 2+ tabs, hidden otherwise; tabs persist across sessions per cluster via localStorage
+- **Multi-term pipe filter** — resource table filter supports `|`-separated terms with AND logic (e.g. `alloy|Running` matches rows containing both terms)
 - **URL-synced filters** — resource table filter is stored in the `?filter=` URL parameter, so it survives tab switches and back navigation
 - **Deterministic back navigation** — back button navigates to the computed parent list URL (preserving filters) instead of unpredictable browser history
 - **Command palette** — quick navigation to any page or resource

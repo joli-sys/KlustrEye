@@ -1,6 +1,6 @@
 {
   "name": "klustreye",
-  "version": "0.0.11",
+  "version": "0.0.12",
   "description": "KlustrEye — a web-based Kubernetes IDE",
   "main": "electron/main.js",
   "scripts": {

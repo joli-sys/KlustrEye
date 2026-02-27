@@ -29,6 +29,7 @@ export function ClusterSwitcher({
   } | null>(null);
   const ref = useRef<HTMLDivElement>(null);
   const filterInputRef = useRef<HTMLInputElement>(null);
+  const [highlightedIndex, setHighlightedIndex] = useState(0);
   const pathname = usePathname();
   const router = useRouter();
   const { data: clusters } = useClusters();
@@ -86,6 +87,16 @@ export function ClusterSwitcher({
       .filter((group) => group.clusters.length > 0);
   }, [grouped, filter, filterLower]);
 
+  // Flat list of visible clusters for keyboard navigation
+  const flatList = useMemo(() => {
+    if (!filter) {
+      if (!hasOrgs) return clusters ?? [];
+      return grouped.flatMap((g) => g.clusters);
+    }
+    if (!hasOrgs) return filteredClusters ?? [];
+    return filteredGrouped.flatMap((g) => g.clusters);
+  }, [filter, hasOrgs, clusters, grouped, filteredClusters, filteredGrouped]);
+
   useEffect(() => {
     if (!open) setFilter("");
   }, [open]);
@@ -109,6 +120,51 @@ export function ClusterSwitcher({
     }
   }, [open]);
 
+  // Reset highlight: current cluster on open/clear, first item on filter change
+  useEffect(() => {
+    if (!open) return;
+    if (!filter) {
+      const idx = flatList.findIndex((c) => c.name === contextName);
+      setHighlightedIndex(idx >= 0 ? idx : 0);
+    } else {
+      setHighlightedIndex(0);
+    }
+  }, [open, filterLower, flatList, contextName]);
+
+  // Keyboard navigation
+  useEffect(() => {
+    if (!open || flatList.length === 0) return;
+    function handleKeyDown(e: KeyboardEvent) {
+      switch (e.key) {
+        case "ArrowDown":
+          e.preventDefault();
+          setHighlightedIndex((i) => (i + 1) % flatList.length);
+          break;
+        case "ArrowUp":
+          e.preventDefault();
+          setHighlightedIndex((i) => (i - 1 + flatList.length) % flatList.length);
+          break;
+        case "Enter":
+          e.preventDefault();
+          if (flatList[highlightedIndex]) switchCluster(flatList[highlightedIndex].name);
+          break;
+        case "Escape":
+          e.preventDefault();
+          setOpen(false);
+          break;
+      }
+    }
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [open, flatList, highlightedIndex]);
+
+  // Scroll highlighted item into view
+  useEffect(() => {
+    if (!open || highlightedIndex < 0) return;
+    const el = ref.current?.querySelector(`[data-cluster-index="${highlightedIndex}"]`);
+    el?.scrollIntoView({ block: "nearest" });
+  }, [open, highlightedIndex]);
+
   function switchCluster(targetName: string) {
     const encoded = encodeURIComponent(targetName);
     const currentEncoded = encodeURIComponent(contextName);
@@ -121,10 +177,17 @@ export function ClusterSwitcher({
   }
 
   function renderClusterItem(cluster: ClusterContext) {
+    const flatIndex = flatList.indexOf(cluster);
+    const isHighlighted = flatIndex === highlightedIndex;
     return (
       <div
         key={cluster.name}
-        className="flex items-center group hover:bg-accent/50"
+        data-cluster-index={flatIndex}
+        className={cn(
+          "flex items-center group",
+          isHighlighted ? "bg-accent" : "hover:bg-accent/50"
+        )}
+        onMouseEnter={() => setHighlightedIndex(flatIndex)}
       >
         <button
           onClick={() => switchCluster(cluster.name)}
