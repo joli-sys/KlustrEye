@@ -5,6 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useClusters } from "@/hooks/use-clusters";
 import { RenameContextDialog } from "@/components/rename-context-dialog";
 import { cn } from "@/lib/utils";
+import { useUIStore } from "@/lib/stores/ui-store";
 import { COLOR_PRESETS, DEFAULT_COLOR_SCHEME } from "@/lib/color-presets";
 import { Server, ChevronDown, Check, Pencil, Search } from "lucide-react";
 import type { ClusterContext } from "@/hooks/use-clusters";
@@ -18,7 +19,8 @@ export function ClusterSwitcher({
   contextName,
   sidebarOpen,
 }: ClusterSwitcherProps) {
-  const [open, setOpen] = useState(false);
+  const open = useUIStore((s) => s.clusterSwitcherOpen);
+  const setOpen = useUIStore((s) => s.setClusterSwitcherOpen);
   const [filter, setFilter] = useState("");
   const [renameCtx, setRenameCtx] = useState<{
     name: string;

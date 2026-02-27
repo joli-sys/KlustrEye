@@ -9,6 +9,7 @@ interface UIState {
   resourceFilters: Record<string, string>;
   shellTerminalOpen: boolean;
   shellTerminalHeight: number;
+  clusterSwitcherOpen: boolean;
   toggleSidebar: () => void;
   setSidebarOpen: (open: boolean) => void;
   setClusterNamespace: (contextName: string, ns: string) => void;
@@ -18,6 +19,8 @@ interface UIState {
   toggleShellTerminal: () => void;
   setShellTerminalOpen: (open: boolean) => void;
   setShellTerminalHeight: (height: number) => void;
+  setClusterSwitcherOpen: (open: boolean) => void;
+  toggleClusterSwitcher: () => void;
 }
 
 export const useUIStore = create<UIState>()(
@@ -30,6 +33,7 @@ export const useUIStore = create<UIState>()(
       resourceFilters: {},
       shellTerminalOpen: false,
       shellTerminalHeight: 300,
+      clusterSwitcherOpen: false,
       toggleSidebar: () => set((state) => ({ sidebarOpen: !state.sidebarOpen })),
       setSidebarOpen: (open) => set({ sidebarOpen: open }),
       setClusterNamespace: (contextName, ns) =>
@@ -41,6 +45,8 @@ export const useUIStore = create<UIState>()(
       toggleShellTerminal: () => set((state) => ({ shellTerminalOpen: !state.shellTerminalOpen })),
       setShellTerminalOpen: (open) => set({ shellTerminalOpen: open }),
       setShellTerminalHeight: (height) => set({ shellTerminalHeight: height }),
+      setClusterSwitcherOpen: (open) => set({ clusterSwitcherOpen: open }),
+      toggleClusterSwitcher: () => set((state) => ({ clusterSwitcherOpen: !state.clusterSwitcherOpen })),
       setResourceFilter: (key, value) => set((state) => {
         const next = { ...state.resourceFilters };
         if (value) {

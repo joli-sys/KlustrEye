@@ -36,6 +36,15 @@ export function useKeyboardShortcuts() {
         useUIStore.getState().toggleShellTerminal();
       }
 
+      // Cmd+S / Ctrl+S — toggle cluster switcher
+      if (e.key === "s" && (e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey) {
+        const target = e.target as HTMLElement;
+        if (target.closest(".monaco-editor")) return;
+        if (target.closest(".xterm")) return;
+        e.preventDefault();
+        useUIStore.getState().toggleClusterSwitcher();
+      }
+
       // Cmd+F / Ctrl+F — focus the table/page filter instead of browser find
       if (e.key === "f" && (e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey) {
         const target = e.target as HTMLElement;
