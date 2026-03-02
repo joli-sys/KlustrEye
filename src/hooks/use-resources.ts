@@ -77,6 +77,28 @@ export function useUpdateResource(contextName: string, kind: ResourceKind) {
   });
 }
 
+export function usePatchResource(contextName: string, kind: ResourceKind) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ name, patch, namespace }: { name: string; patch: object; namespace?: string }) => {
+      const res = await fetch(resourceUrl(contextName, kind, name, namespace), {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ patch }),
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || `Failed to patch ${kind}`);
+      }
+      return res.json();
+    },
+    onSuccess: (_data, variables) => {
+      queryClient.invalidateQueries({ queryKey: ["resources", contextName, kind] });
+      queryClient.invalidateQueries({ queryKey: ["resource", contextName, kind, variables.name] });
+    },
+  });
+}
+
 export function useDeleteResource(contextName: string, kind: ResourceKind) {
   const queryClient = useQueryClient();
   return useMutation({

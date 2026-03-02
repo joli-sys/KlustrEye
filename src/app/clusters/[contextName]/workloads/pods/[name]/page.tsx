@@ -16,7 +16,8 @@ import { PodMetricsChart } from "@/components/pod-metrics-chart";
 import { PortForwardTab } from "@/components/port-forward-tab";
 import { parseCpuValue, parseMemoryValue, formatBytes, formatCpu } from "@/lib/utils";
 import { getPluginsWithResourceExtension } from "@/lib/plugins/registry";
-import { Eye, EyeOff } from "lucide-react";
+import { EditResourcesDialog } from "@/components/edit-resources-dialog";
+import { Eye, EyeOff, Cpu } from "lucide-react";
 import Link from "next/link";
 
 const podPlugins = getPluginsWithResourceExtension("pods");
@@ -393,6 +394,7 @@ export default function PodDetailPage({ params }: { params: Promise<{ contextNam
   const searchParams = useSearchParams();
   const namespace = searchParams.get("ns") || "default";
 
+  const [editResourcesOpen, setEditResourcesOpen] = useState(false);
   const { data } = useResource(ctx, "pods", name, namespace);
   const { data: metricsData } = usePodMetrics(ctx, namespace);
 
@@ -595,8 +597,12 @@ export default function PodDetailPage({ params }: { params: Promise<{ contextNam
         </Card>
 
         <Card>
-          <CardHeader>
+          <CardHeader className="flex flex-row items-center justify-between">
             <CardTitle className="text-base">Containers</CardTitle>
+            <Button variant="outline" size="sm" onClick={() => setEditResourcesOpen(true)} className="gap-1.5">
+              <Cpu className="h-3.5 w-3.5" />
+              View Resources
+            </Button>
           </CardHeader>
           <CardContent>
             <div className="space-y-3">
@@ -842,6 +848,17 @@ export default function PodDetailPage({ params }: { params: Promise<{ contextNam
           namespace={namespace}
         />
       </div>
+
+      <EditResourcesDialog
+        open={editResourcesOpen}
+        onOpenChange={setEditResourcesOpen}
+        contextName={ctx}
+        kind="pods"
+        name={name}
+        namespace={namespace}
+        containers={containers}
+        readOnly
+      />
     </ResourceDetail>
   );
 }

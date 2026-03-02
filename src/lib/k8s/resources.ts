@@ -1,4 +1,5 @@
 import * as k8s from "@kubernetes/client-node";
+import { setHeaderOptions } from "@kubernetes/client-node";
 import { type ResourceKind, RESOURCE_REGISTRY } from "@/lib/constants";
 import {
   getCoreApi,
@@ -152,9 +153,7 @@ export async function patchResource(
   const fn = (api as unknown as Record<string, unknown>)[patchFn] as Function;
   if (!fn) throw new Error(`Function ${patchFn} not found`);
 
-  const options = {
-    headers: { "Content-Type": "application/strategic-merge-patch+json" },
-  };
+  const options = setHeaderOptions("Content-Type", "application/strategic-merge-patch+json");
 
   if (entry.namespaced) {
     return fn.call(api, { name, namespace: namespace || "default", body: patch }, options);

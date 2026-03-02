@@ -1,7 +1,8 @@
 "use client";
 
-import { use } from "react";
+import { use, useState } from "react";
 import { ResourceListPage } from "@/components/resource-list-page";
+import { ScaleDialog } from "@/components/scale-dialog";
 import { nameColumn, namespaceColumn, ageColumn } from "@/components/resource-table";
 import type { ColumnDef } from "@tanstack/react-table";
 
@@ -28,5 +29,40 @@ const columns: ColumnDef<Record<string, unknown>>[] = [
 
 export default function ReplicaSetsPage({ params }: { params: Promise<{ contextName: string }> }) {
   const { contextName } = use(params);
-  return <ResourceListPage contextName={decodeURIComponent(contextName)} kind="replicasets" columns={columns} />;
+  const ctx = decodeURIComponent(contextName);
+  const [scaleTarget, setScaleTarget] = useState<{
+    name: string;
+    namespace: string;
+    replicas: number;
+  } | null>(null);
+
+  return (
+    <>
+      <ResourceListPage
+        contextName={ctx}
+        kind="replicasets"
+        columns={columns}
+        onScale={(item) => {
+          const metadata = item.metadata as Record<string, unknown>;
+          const spec = item.spec as Record<string, unknown>;
+          setScaleTarget({
+            name: metadata?.name as string,
+            namespace: metadata?.namespace as string,
+            replicas: (spec?.replicas as number) || 0,
+          });
+        }}
+      />
+      {scaleTarget && (
+        <ScaleDialog
+          open={!!scaleTarget}
+          onOpenChange={(open) => { if (!open) setScaleTarget(null); }}
+          contextName={ctx}
+          kind="replicasets"
+          name={scaleTarget.name}
+          namespace={scaleTarget.namespace}
+          currentReplicas={scaleTarget.replicas}
+        />
+      )}
+    </>
+  );
 }

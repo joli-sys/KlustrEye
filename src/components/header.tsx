@@ -4,11 +4,13 @@ import { NamespaceSelector } from "@/components/namespace-selector";
 import { PortForwardIndicator } from "@/components/port-forward-indicator";
 import { useClusters } from "@/hooks/use-clusters";
 import { Button } from "@/components/ui/button";
-import { Search, Menu, Terminal } from "lucide-react";
+import { Search, Menu, Terminal, Keyboard } from "lucide-react";
+import { KeyboardShortcutsDialog, useKeyboardShortcutsDialog } from "@/components/keyboard-shortcuts-dialog";
 import { useUIStore } from "@/lib/stores/ui-store";
 
 export function Header({ contextName }: { contextName: string }) {
   const { setCommandPaletteOpen, setMobileSidebarOpen, toggleShellTerminal, shellTerminalOpen } = useUIStore();
+  const { open: shortcutsOpen, setOpen: setShortcutsOpen } = useKeyboardShortcutsDialog();
   const { data: clusters } = useClusters();
   const current = clusters?.find((c) => c.name === contextName);
   const displayName = current?.displayName;
@@ -58,6 +60,16 @@ export function Header({ contextName }: { contextName: string }) {
             <span className="text-xs">⌘</span>K
           </kbd>
         </Button>
+        <Button
+          variant="outline"
+          size="icon"
+          className="h-8 w-8 text-muted-foreground"
+          onClick={() => setShortcutsOpen(true)}
+          title="Keyboard shortcuts (?)"
+        >
+          <Keyboard className="h-3.5 w-3.5" />
+        </Button>
+        <KeyboardShortcutsDialog open={shortcutsOpen} onOpenChange={setShortcutsOpen} />
       </div>
     </header>
   );

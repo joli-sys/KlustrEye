@@ -18,7 +18,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Checkbox } from "@/components/ui/checkbox";
-import { ArrowUpDown, MoreHorizontal, Trash2, Edit, Terminal, FileText, Star } from "lucide-react";
+import { ArrowUpDown, MoreHorizontal, Trash2, Edit, Terminal, FileText, Star, Scaling } from "lucide-react";
 import { formatAge, cn } from "@/lib/utils";
 import { useSavedSearches } from "@/lib/stores/saved-searches-store";
 import { useTabStore } from "@/lib/stores/tab-store";
@@ -68,6 +68,7 @@ interface ResourceTableProps {
   onDelete?: (item: Record<string, unknown>) => void;
   onTerminal?: (item: Record<string, unknown>) => void;
   onLogs?: (item: Record<string, unknown>) => void;
+  onScale?: (item: Record<string, unknown>) => void;
   onBatchDelete?: (items: Record<string, unknown>[]) => void;
   detailLinkFn?: (item: Record<string, unknown>) => string;
   kind: string;
@@ -83,6 +84,7 @@ export function ResourceTable({
   onDelete,
   onTerminal,
   onLogs,
+  onScale,
   onBatchDelete,
   detailLinkFn,
   kind,
@@ -186,7 +188,7 @@ export function ResourceTable({
   }, []);
 
   const allColumns = useMemo(() => {
-    const hasActions = onEdit || onDelete || onTerminal || onLogs;
+    const hasActions = onEdit || onDelete || onTerminal || onLogs || onScale;
 
     const selectColumn: ColumnDef<Record<string, unknown>> = {
       id: "select",
@@ -222,6 +224,11 @@ export function ResourceTable({
           const item = row.original;
           return (
             <div className="flex items-center gap-1 justify-end">
+              {onScale && (
+                <Button variant="ghost" size="icon" onClick={() => onScale(item)} title="Scale">
+                  <Scaling className="h-3.5 w-3.5" />
+                </Button>
+              )}
               {onLogs && (
                 <Button variant="ghost" size="icon" onClick={() => onLogs(item)} title="Logs">
                   <FileText className="h-3.5 w-3.5" />
@@ -248,7 +255,7 @@ export function ResourceTable({
         size: 120,
       } satisfies ColumnDef<Record<string, unknown>>,
     ];
-  }, [columns, onEdit, onDelete, onTerminal, onLogs]);
+  }, [columns, onEdit, onDelete, onTerminal, onLogs, onScale]);
 
   const table = useReactTable({
     data,

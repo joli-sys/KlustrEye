@@ -18,6 +18,7 @@ interface ResourceListPageProps {
   onCreate?: () => void;
   onTerminal?: (item: Record<string, unknown>) => void;
   onLogs?: (item: Record<string, unknown>) => void;
+  onScale?: (item: Record<string, unknown>) => void;
   detailLinkFn?: (item: Record<string, unknown>) => string;
 }
 
@@ -29,6 +30,7 @@ export function ResourceListPage({
   onCreate,
   onTerminal,
   onLogs,
+  onScale,
   detailLinkFn,
 }: ResourceListPageProps) {
   const entry = RESOURCE_REGISTRY[kind];
@@ -121,6 +123,7 @@ export function ResourceListPage({
         onBatchDelete={handleBatchDelete}
         onTerminal={onTerminal}
         onLogs={onLogs}
+        onScale={onScale}
         detailLinkFn={resolvedDetailLinkFn}
       />
     </div>

@@ -3,7 +3,8 @@
 import { use, useState } from "react";
 import { ResourceListPage } from "@/components/resource-list-page";
 import { CreateResourceDialog } from "@/components/create-resource-dialog";
-import { nameColumn, namespaceColumn, ageColumn, statusBadge } from "@/components/resource-table";
+import { ScaleDialog } from "@/components/scale-dialog";
+import { nameColumn, namespaceColumn, ageColumn } from "@/components/resource-table";
 import type { ColumnDef } from "@tanstack/react-table";
 
 const columns: ColumnDef<Record<string, unknown>>[] = [
@@ -34,6 +35,11 @@ export default function DeploymentsPage({ params }: { params: Promise<{ contextN
   const { contextName } = use(params);
   const ctx = decodeURIComponent(contextName);
   const [createOpen, setCreateOpen] = useState(false);
+  const [scaleTarget, setScaleTarget] = useState<{
+    name: string;
+    namespace: string;
+    replicas: number;
+  } | null>(null);
 
   return (
     <>
@@ -42,6 +48,15 @@ export default function DeploymentsPage({ params }: { params: Promise<{ contextN
         kind="deployments"
         columns={columns}
         onCreate={() => setCreateOpen(true)}
+        onScale={(item) => {
+          const metadata = item.metadata as Record<string, unknown>;
+          const spec = item.spec as Record<string, unknown>;
+          setScaleTarget({
+            name: metadata?.name as string,
+            namespace: metadata?.namespace as string,
+            replicas: (spec?.replicas as number) || 0,
+          });
+        }}
         detailLinkFn={(item) => {
           const metadata = item.metadata as Record<string, unknown>;
           return `/clusters/${encodeURIComponent(ctx)}/workloads/deployments/${metadata.name}?ns=${metadata.namespace}`;
@@ -53,6 +68,17 @@ export default function DeploymentsPage({ params }: { params: Promise<{ contextN
         contextName={ctx}
         kind="deployments"
       />
+      {scaleTarget && (
+        <ScaleDialog
+          open={!!scaleTarget}
+          onOpenChange={(open) => { if (!open) setScaleTarget(null); }}
+          contextName={ctx}
+          kind="deployments"
+          name={scaleTarget.name}
+          namespace={scaleTarget.namespace}
+          currentReplicas={scaleTarget.replicas}
+        />
+      )}
     </>
   );
 }
