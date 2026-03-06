@@ -117,3 +117,21 @@ export function useDeleteResource(contextName: string, kind: ResourceKind) {
     },
   });
 }
+
+export function useTriggerCronJob(contextName: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ name, namespace }: { name: string; namespace: string }) => {
+      const url = `/api/clusters/${encodeURIComponent(contextName)}/cronjobs/${encodeURIComponent(name)}/trigger?namespace=${encodeURIComponent(namespace)}`;
+      const res = await fetch(url, { method: "POST" });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || "Failed to trigger CronJob");
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["resources", contextName, "jobs"] });
+    },
+  });
+}
