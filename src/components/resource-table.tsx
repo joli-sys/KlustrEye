@@ -97,6 +97,8 @@ export function ResourceTable({
   const { openTab } = useTabStore();
   const resourceFilters = useUIStore((s) => s.resourceFilters);
   const setResourceFilter = useUIStore((s) => s.setResourceFilter);
+  const [focusedRowIndex, setFocusedRowIndex] = useState(-1);
+  const tableContainerRef = useRef<HTMLDivElement>(null);
 
   // Derive cluster context from pathname: /clusters/<contextName>/...
   const contextName = (() => {
@@ -271,6 +273,87 @@ export function ResourceTable({
     getFilteredRowModel: getFilteredRowModel(),
   });
 
+  // K9s-style table navigation (j/k/g/G)
+  useEffect(() => {
+    function handleNavigate(e: Event) {
+      const detail = (e as CustomEvent).detail;
+      const rows = table.getFilteredRowModel().rows;
+      if (rows.length === 0) return;
+
+      setFocusedRowIndex((prev) => {
+        switch (detail.direction) {
+          case "down":
+            return Math.min(prev + 1, rows.length - 1);
+          case "up":
+            return Math.max(prev - 1, 0);
+          case "top":
+            return 0;
+          case "bottom":
+            return rows.length - 1;
+          default:
+            return prev;
+        }
+      });
+    }
+    window.addEventListener("table-navigate", handleNavigate);
+    return () => window.removeEventListener("table-navigate", handleNavigate);
+  }, [table]);
+
+  // K9s-style table actions (enter/d/e/l/s/x/delete)
+  useEffect(() => {
+    function handleAction(e: Event) {
+      const detail = (e as CustomEvent).detail;
+      const rows = table.getFilteredRowModel().rows;
+      if (focusedRowIndex < 0 || focusedRowIndex >= rows.length) return;
+      const row = rows[focusedRowIndex];
+      const item = row.original;
+
+      switch (detail.action) {
+        case "enter":
+        case "describe":
+          if (detailLinkFn) {
+            router.push(detailLinkFn(item));
+          }
+          break;
+        case "edit":
+          onEdit?.(item);
+          break;
+        case "logs":
+          onLogs?.(item);
+          break;
+        case "shell":
+          onTerminal?.(item);
+          break;
+        case "delete":
+          onDelete?.(item);
+          break;
+        case "select":
+          row.toggleSelected();
+          break;
+      }
+    }
+    window.addEventListener("table-action", handleAction);
+    return () => window.removeEventListener("table-action", handleAction);
+  }, [focusedRowIndex, table, detailLinkFn, router, onEdit, onLogs, onTerminal, onDelete]);
+
+  // Scroll focused row into view
+  useEffect(() => {
+    if (focusedRowIndex < 0) return;
+    const container = tableContainerRef.current;
+    if (!container) return;
+    const row = container.querySelector(`[data-row-index="${focusedRowIndex}"]`);
+    row?.scrollIntoView({ block: "nearest" });
+  }, [focusedRowIndex]);
+
+  // Reset focused row when data changes
+  useEffect(() => {
+    setFocusedRowIndex((prev) => {
+      const max = table.getFilteredRowModel().rows.length - 1;
+      if (prev > max) return Math.max(max, -1);
+      return prev;
+    });
+  }, [data, globalFilter, table]);
+
   const selectedRows = table.getFilteredSelectedRowModel().rows;
   const selectedCount = selectedRows.length;
 
@@ -294,6 +377,12 @@ export function ResourceTable({
             placeholder={`Filter ${kind}... (| to combine)`}
             value={globalFilter}
             onChange={(e) => handleFilterChange(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === "Escape") {
+                e.preventDefault();
+                filterInputRef.current?.blur();
+              }
+            }}
             className="pr-8"
           />
           {!globalFilter && (
@@ -340,7 +429,7 @@ export function ResourceTable({
         </div>
       )}
 
-      <div className="rounded-md border overflow-x-auto">
+      <div ref={tableContainerRef} className="rounded-md border overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
             {table.getHeaderGroups().map((headerGroup) => (
@@ -365,8 +454,17 @@ export function ResourceTable({
             ))}
           </thead>
           <tbody>
-            {table.getRowModel().rows.map((row) => (
-              <tr key={row.id} className={`border-b hover:bg-muted/30 transition-colors ${row.getIsSelected() ? "bg-muted/40" : ""}`}>
+            {table.getRowModel().rows.map((row, rowIdx) => (
+              <tr
+                key={row.id}
+                data-row-index={rowIdx}
+                onClick={() => setFocusedRowIndex(rowIdx)}
+                className={cn(
+                  "border-b hover:bg-muted/30 transition-colors cursor-default",
+                  row.getIsSelected() && "bg-muted/40",
+                  rowIdx === focusedRowIndex && "ring-1 ring-inset ring-primary/50 bg-primary/5"
+                )}
+              >
                 {row.getVisibleCells().map((cell) => {
                   const colMeta = cell.column.columnDef.meta as { className?: string } | undefined;
                   return (

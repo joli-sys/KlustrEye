@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
@@ -37,6 +38,30 @@ export function Sidebar({ contextName, onNavigate, forceExpanded }: { contextNam
   const { openTab } = useTabStore();
   const { searches: savedSearches, removeSearch } = useSavedSearches();
   const basePath = `/clusters/${encodeURIComponent(contextName)}`;
+
+  // 1-9 quick nav: jump to first item in each sidebar section
+  useEffect(() => {
+    function handleSidebarNav(e: Event) {
+      const { index } = (e as CustomEvent).detail;
+      if (index >= 0 && index < SIDEBAR_SECTIONS.length) {
+        const firstItem = SIDEBAR_SECTIONS[index].items[0];
+        if (firstItem) {
+          router.push(`${basePath}/${firstItem.href}`);
+        }
+      }
+    }
+    window.addEventListener("sidebar-navigate", handleSidebarNav);
+    return () => window.removeEventListener("sidebar-navigate", handleSidebarNav);
+  }, [basePath, router]);
+
+  // Escape — go back
+  useEffect(() => {
+    function handleBack() {
+      router.back();
+    }
+    window.addEventListener("navigate-back", handleBack);
+    return () => window.removeEventListener("navigate-back", handleBack);
+  }, [router]);
 
   return (
     <aside

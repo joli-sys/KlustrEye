@@ -16,9 +16,33 @@ const sections = [
   {
     title: "Navigation",
     shortcuts: [
+      { keys: [":"], description: "Open command palette" },
+      { keys: [mod, "K"], description: "Open command palette" },
       { keys: [mod, "S"], description: "Open cluster switcher" },
       { keys: [mod, "N"], description: "Open namespace selector" },
-      { keys: [mod, "K"], description: "Open command palette" },
+      { keys: ["1-9"], description: "Jump to sidebar section" },
+      { keys: ["Esc"], description: "Go back" },
+    ],
+  },
+  {
+    title: "Table Navigation",
+    shortcuts: [
+      { keys: ["j"], description: "Move down" },
+      { keys: ["k"], description: "Move up" },
+      { keys: ["g"], description: "Go to first row" },
+      { keys: ["G"], description: "Go to last row" },
+      { keys: ["Enter"], description: "Open detail" },
+      { keys: ["x"], description: "Toggle row selection" },
+    ],
+  },
+  {
+    title: "Resource Actions",
+    shortcuts: [
+      { keys: ["d"], description: "Describe / view detail" },
+      { keys: ["e"], description: "Edit YAML" },
+      { keys: ["l"], description: "View logs (Pods)" },
+      { keys: ["s"], description: "Shell into pod" },
+      { keys: ["Ctrl", "D"], description: "Delete resource" },
     ],
   },
   {
