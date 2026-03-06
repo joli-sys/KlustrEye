@@ -92,11 +92,19 @@ let ensured = false;
 export async function ensureDatabase(): Promise<void> {
   if (ensured) return;
   ensured = true;
-  try {
-    for (const sql of SCHEMA_STATEMENTS) {
-      await prisma.$executeRawUnsafe(sql);
+
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      for (const sql of SCHEMA_STATEMENTS) {
+        await prisma.$executeRawUnsafe(sql);
+      }
+      return;
+    } catch (err) {
+      if (attempt < 2) {
+        await new Promise((r) => setTimeout(r, 500 * (attempt + 1)));
+      } else {
+        console.error("ensureDatabase failed:", err);
+      }
     }
-  } catch (err) {
-    console.error("ensureDatabase failed:", err);
   }
 }

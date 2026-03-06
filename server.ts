@@ -93,10 +93,12 @@ export async function startServer(opts: {
   });
 }
 
-// Direct-run guard: auto-start only when executed directly (not imported by Electron)
+// Direct-run guard: auto-start only when executed directly (not imported as a module)
 const isDirectRun =
   import.meta.url === `file://${process.argv[1]}` ||
-  process.argv[1]?.endsWith("server.ts");
+  import.meta.url === `file://${encodeURI(process.argv[1] || "")}` ||
+  process.argv[1]?.endsWith("server.ts") ||
+  process.argv[1]?.endsWith("server.bundle.mjs");
 
 if (isDirectRun) {
   const dev = process.env.NODE_ENV !== "production";

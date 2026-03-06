@@ -1,4 +1,4 @@
-name: Build Electron App
+name: Build Tauri App
 
 on:
   push:
@@ -11,7 +11,15 @@ jobs:
   build:
     strategy:
       matrix:
-        os: [macos-latest, ubuntu-latest, windows-latest]
+        include:
+          - os: macos-latest
+            target: aarch64-apple-darwin
+          - os: macos-latest
+            target: x86_64-apple-darwin
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
     runs-on: ${{ matrix.os }}
 
     steps:
@@ -24,41 +32,46 @@ jobs:
           node-version: 22
           cache: npm
 
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
       - name: Set app version from tag
         shell: bash
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
           npm pkg set version="$VERSION"
+          # Sync version into Tauri config and Cargo.toml
+          cd src-tauri
+          sed -i.bak "s/\"version\": \".*\"/\"version\": \"$VERSION\"/" tauri.conf.json && rm -f tauri.conf.json.bak
+          sed -i.bak "s/^version = \".*\"/version = \"$VERSION\"/" Cargo.toml && rm -f Cargo.toml.bak
           echo "App version: $VERSION"
 
       - name: Install dependencies
         run: npm ci
 
-      - name: Build Next.js
-        run: npm run build
-
-      - name: Bundle server for Electron
-        run: npm run electron:bundle
-
-      - name: Package Electron app
-        run: npx electron-forge package
+      - name: Build Tauri app
+        uses: tauri-apps/tauri-action@v0
         env:
-          CSC_IDENTITY_AUTO_DISCOVERY: "false"
-
-      - name: Ad-hoc sign macOS app
-        if: runner.os == 'macOS'
-        run: codesign --force --deep --sign - "$(find out -name 'KlustrEye.app' -maxdepth 3 -type d | head -1)"
-
-      - name: Create distributables
-        run: npx electron-forge make --skip-package
-
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Skip macOS code signing in CI (ad-hoc sign)
+          APPLE_SIGNING_IDENTITY: "-"
         with:
-          name: klustreye-${{ matrix.os }}
-          path: out/make/**/*
-
-      - name: Upload to GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: out/make/**/*.zip
+          tagName: ${{ github.ref_name }}
+          releaseName: "KlustrEye ${{ github.ref_name }}"
+          releaseBody: "See the assets below to download the app for your platform."
+          releaseDraft: false
+          prerelease: false
+          args: --target ${{ matrix.target }}
