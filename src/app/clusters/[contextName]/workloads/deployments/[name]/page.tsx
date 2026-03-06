@@ -9,7 +9,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ScaleDialog } from "@/components/scale-dialog";
 import { EditResourcesDialog } from "@/components/edit-resources-dialog";
-import { Scaling, Cpu } from "lucide-react";
+import { RestartDialog } from "@/components/restart-dialog";
+import { Scaling, Cpu, RotateCcw } from "lucide-react";
 
 export default function DeploymentDetailPage({ params }: { params: Promise<{ contextName: string; name: string }> }) {
   const { contextName, name } = use(params);
@@ -18,6 +19,7 @@ export default function DeploymentDetailPage({ params }: { params: Promise<{ con
   const namespace = searchParams.get("ns") || "default";
   const [scaleOpen, setScaleOpen] = useState(false);
   const [editResourcesOpen, setEditResourcesOpen] = useState(false);
+  const [restartOpen, setRestartOpen] = useState(false);
 
   const { data } = useResource(ctx, "deployments", name, namespace);
 
@@ -40,6 +42,9 @@ export default function DeploymentDetailPage({ params }: { params: Promise<{ con
                 <span>{spec.replicas as number || 0}</span>
                 <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => setScaleOpen(true)} title="Scale">
                   <Scaling className="h-3.5 w-3.5" />
+                </Button>
+                <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => setRestartOpen(true)} title="Restart">
+                  <RotateCcw className="h-3.5 w-3.5" />
                 </Button>
               </div>
             </div>
@@ -136,6 +141,14 @@ export default function DeploymentDetailPage({ params }: { params: Promise<{ con
         name={name}
         namespace={namespace}
         containers={containers}
+      />
+      <RestartDialog
+        open={restartOpen}
+        onOpenChange={setRestartOpen}
+        contextName={ctx}
+        kind="deployments"
+        name={name}
+        namespace={namespace}
       />
     </ResourceDetail>
   );
