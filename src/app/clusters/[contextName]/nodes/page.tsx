@@ -5,6 +5,7 @@ import { useResources, useDeleteResource } from "@/hooks/use-resources";
 import { useNodeMetrics } from "@/hooks/use-metrics";
 import { ResourceTable, nameColumn, ageColumn, statusBadge } from "@/components/resource-table";
 import { Badge } from "@/components/ui/badge";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { parseCpuValue, parseMemoryValue, formatBytes, formatCpu } from "@/lib/utils";
 import type { ColumnDef } from "@tanstack/react-table";
 import { useToast } from "@/components/ui/toast";
@@ -49,6 +50,36 @@ export default function NodesPage({ params }: { params: Promise<{ contextName: s
     return map;
   }, [metricsData]);
 
+  const { data: podsData } = useResources(ctx, "pods");
+
+  const podsByNode = useMemo(() => {
+    const map = new Map<string, { daemonset: number; other: number }>();
+    const pods = (podsData || []) as Record<string, unknown>[];
+
+    for (const pod of pods) {
+      const spec = pod.spec as Record<string, unknown>;
+      const metadata = pod.metadata as Record<string, unknown>;
+      const nodeName = spec?.nodeName as string;
+      if (!nodeName) continue;
+
+      if (!map.has(nodeName)) {
+        map.set(nodeName, { daemonset: 0, other: 0 });
+      }
+      const entry = map.get(nodeName)!;
+
+      const ownerRefs = (metadata?.ownerReferences as Record<string, unknown>[]) || [];
+      const isDaemonSet = ownerRefs.some((ref) => ref.kind === "DaemonSet");
+
+      if (isDaemonSet) {
+        entry.daemonset++;
+      } else {
+        entry.other++;
+      }
+    }
+
+    return map;
+  }, [podsData]);
+
   const columns: ColumnDef<Record<string, unknown>>[] = useMemo(() => [
     nameColumn(),
     {
@@ -74,6 +105,35 @@ export default function NodesPage({ params }: { params: Promise<{ contextName: s
           }
         }
         return roles.length > 0 ? roles.join(", ") : "-";
+      },
+    },
+    {
+      id: "pods",
+      header: "Pods",
+      accessorFn: (row) => {
+        const name = (row.metadata as Record<string, unknown>)?.name as string;
+        const counts = podsByNode.get(name);
+        if (!counts) return 0;
+        return counts.daemonset + counts.other;
+      },
+      cell: ({ row }) => {
+        const name = (row.original.metadata as Record<string, unknown>)?.name as string;
+        const counts = podsByNode.get(name);
+        if (!counts) return <span className="text-muted-foreground text-xs">-</span>;
+        return (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span className="cursor-help">
+                <span className="text-muted-foreground">{counts.daemonset}</span>
+                <span className="text-muted-foreground mx-1">/</span>
+                <span>{counts.other}</span>
+              </span>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p>{counts.daemonset} DaemonSet pods, {counts.other} other pods</p>
+            </TooltipContent>
+          </Tooltip>
+        );
       },
     },
     {
@@ -226,7 +286,7 @@ export default function NodesPage({ params }: { params: Promise<{ contextName: s
       },
     },
     ageColumn(),
-  ], [metricsMap]);
+  ], [metricsMap, podsByNode]);
 
   const handleDelete = async (item: Record<string, unknown>) => {
     const metadata = item.metadata as Record<string, unknown>;
