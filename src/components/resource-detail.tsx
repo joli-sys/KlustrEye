@@ -26,6 +26,7 @@ interface ResourceDetailProps {
   namespace?: string;
   children?: React.ReactNode;
   extraTabs?: { value: string; label: string; content: React.ReactNode }[];
+  headerActions?: React.ReactNode;
 }
 
 export function ResourceDetail({
@@ -35,6 +36,7 @@ export function ResourceDetail({
   namespace,
   children,
   extraTabs,
+  headerActions,
 }: ResourceDetailProps) {
   const { data, isLoading, refetch } = useResource(contextName, kind, name, namespace);
   const updateMutation = useUpdateResource(contextName, kind);
@@ -117,6 +119,7 @@ export function ResourceDetail({
           </div>
         </div>
         <div className="flex items-center gap-2">
+          {headerActions}
           {tab === "yaml" && editedYaml !== null && (
             <Button size="sm" onClick={handleSave} className="gap-2" disabled={updateMutation.isPending}>
               <Save className="h-4 w-4" />
