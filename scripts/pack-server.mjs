@@ -6,7 +6,7 @@
  * The resulting app is fully standalone — no system Node.js required.
  */
 import { execSync } from "child_process";
-import { mkdirSync, cpSync, existsSync, statSync, chmodSync } from "fs";
+import { mkdirSync, cpSync, existsSync, statSync, chmodSync, rmSync, readdirSync, readFileSync } from "fs";
 import { join, basename } from "path";
 import { pipeline } from "stream/promises";
 import { createWriteStream } from "fs";
@@ -102,7 +102,7 @@ async function downloadNodeBinary() {
 }
 
 // Clean and create staging directory
-execSync(`rm -rf ${dist}`);
+rmSync(dist, { recursive: true, force: true });
 mkdirSync(staging, { recursive: true });
 
 // Use the standalone output as the root (it contains .next/ and node_modules/)
@@ -136,7 +136,7 @@ if (existsSync(prismaSchema)) {
 }
 
 // Overlay full versions of packages that server.bundle.mjs imports directly.
-const serverDeps = ["next", "ws", "node-pty"];
+const serverDeps = ["next", "ws", "node-pty", "@prisma/client", "@kubernetes/client-node"];
 const srcModules = join(root, "node_modules");
 const dstModules = join(staging, "node_modules");
 
@@ -149,11 +149,54 @@ for (const pkg of serverDeps) {
   }
 }
 
+// Overlay .prisma generated client (contains the native engine binary)
+const dotPrisma = join(srcModules, ".prisma");
+if (existsSync(dotPrisma)) {
+  cpSync(dotPrisma, join(dstModules, ".prisma"), { recursive: true });
+  console.log("  Overlaid node_modules/.prisma");
+}
+
+// Turbopack externalizes packages with a content hash suffix
+// (e.g. @prisma/client-2c3a283f134fdcb6, @kubernetes/client-node-e91ae5858104584f).
+// Scan chunks for these hashed names and create copies pointing to the real package.
+const chunksDir = join(staging, ".next", "server", "chunks");
+if (existsSync(chunksDir)) {
+  // Match scoped (@scope/pkg-HASH) and unscoped (pkg-HASH) patterns
+  const hashPattern = /(?:@[a-zA-Z0-9_-]+\/)?[a-zA-Z0-9_.-]+-[a-f0-9]{16}/g;
+  const aliases = new Set();
+  for (const f of readdirSync(chunksDir)) {
+    if (!f.endsWith(".js")) continue;
+    const content = readFileSync(join(chunksDir, f), "utf8");
+    for (const m of content.matchAll(hashPattern)) {
+      aliases.add(m[0]);
+    }
+  }
+  for (const hashedName of aliases) {
+    // Strip the -HASH suffix to get the real package name
+    const realName = hashedName.replace(/-[a-f0-9]{16}$/, "");
+    const realDir = join(dstModules, ...realName.split("/"));
+    const aliasDir = join(dstModules, ...hashedName.split("/"));
+    if (existsSync(realDir) && !existsSync(aliasDir)) {
+      mkdirSync(join(aliasDir, ".."), { recursive: true });
+      cpSync(realDir, aliasDir, { recursive: true });
+      console.log(`  Created alias ${hashedName} -> ${realName}`);
+    }
+  }
+}
+
 // Download and bundle Node.js binary
 await downloadNodeBinary();
 
-// Create tarball
-execSync(`tar -czf server-pack.tar.gz -C staging .`, { cwd: dist });
+// Create tarball (use platform-appropriate command)
+if (platform === "win32") {
+  // Windows tar doesn't support -C reliably; use PowerShell to cd first
+  execSync(
+    `powershell -Command "Push-Location '${staging}'; tar -czf '${join(dist, "server-pack.tar.gz")}' .; Pop-Location"`,
+    { stdio: "pipe" }
+  );
+} else {
+  execSync(`tar -czf server-pack.tar.gz -C staging .`, { cwd: dist });
+}
 
 const size = statSync(join(dist, "server-pack.tar.gz")).size;
 console.log(`✓ Created dist-server/server-pack.tar.gz (${(size / 1024 / 1024).toFixed(1)} MB)`);
