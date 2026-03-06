@@ -85,7 +85,7 @@ A web-based Kubernetes IDE built with Next.js, React, and TypeScript. Connect to
 - **Mobile sidebar** — off-canvas drawer with backdrop on small screens (hamburger menu on < md)
 - **Adaptive tables** — responsive column hiding (CPU/Memory at lg, Namespace/Node at xl)
 - **Responsive layout** — compact header, stacking elements, and full-width filters on mobile
-- **Electron window dragging** — draggable header regions for desktop app
+- **Desktop window** — lightweight native window via Tauri (no Chromium bundled)
 
 ## Tech Stack
 
@@ -104,7 +104,7 @@ A web-based Kubernetes IDE built with Next.js, React, and TypeScript. Connect to
 | Tables | TanStack React Table |
 | Charts | Recharts |
 | Network Graph | React Flow (`@xyflow/react`) with dagre auto-layout |
-| Desktop | Electron with Electron Forge |
+| Desktop | Tauri v2 (native OS webview) |
 
 ## Getting Started
 
@@ -122,16 +122,20 @@ npm run db:push      # Initialize SQLite database
 npm run dev          # Start dev server on http://localhost:3000
 ```
 
-## Desktop App (Electron)
+## Desktop App (Tauri)
 
-KlustrEye can run as a standalone desktop application via Electron. The Electron wrapper starts the Next.js server in-process, opens a native window, and stores its SQLite database in the OS user data directory.
+KlustrEye ships as a lightweight desktop application via [Tauri v2](https://v2.tauri.app/). Instead of bundling Chromium, Tauri uses the native OS webview (WebKit on macOS, WebView2 on Windows, WebKitGTK on Linux), resulting in a much smaller binary and lower memory usage.
+
+The Tauri wrapper spawns the Next.js server as a child process, opens a native window, and stores its SQLite database in `~/Library/Application Support/KlustrEye/` (macOS).
+
+**Prerequisites:** Node.js must be installed on the system (the app runs the Next.js server at runtime).
 
 ```bash
-npm run electron:dev     # Build Next.js + bundle server + launch Electron
-npm run electron:make    # Build + package distributable (ZIP)
+npm run tauri:dev        # Start Tauri in dev mode (launches Next.js + native window)
+npm run tauri:build      # Build production desktop binary (DMG, AppImage, MSI)
 ```
 
-The packaged app includes a loading screen while the server starts and automatically finds an available port.
+Pre-built binaries for macOS (Apple Silicon & Intel), Linux, and Windows are available on the [Releases](https://github.com/joli-sys/KlustrEye/releases) page.
 
 ## Scripts
 
@@ -144,8 +148,8 @@ The packaged app includes a loading screen while the server starts and automatic
 | `npm run db:push` | Sync Prisma schema to database |
 | `npm run db:migrate` | Run Prisma migrations |
 | `npm run db:studio` | Open Prisma Studio GUI |
-| `npm run electron:dev` | Build and launch Electron desktop app |
-| `npm run electron:make` | Build and package Electron distributable |
+| `npm run tauri:dev` | Start Tauri desktop app in dev mode |
+| `npm run tauri:build` | Build production Tauri desktop binary |
 | `npx tsc --noEmit` | Type-check |
 
 ## Project Structure
@@ -202,9 +206,13 @@ src/
 prisma/
   schema.prisma              # Database schema
 server.ts                    # Custom Node.js server with WebSocket
-electron/
-  main.js                    # Electron main process
-forge.config.ts              # Electron Forge packaging config
+src-tauri/
+  src/lib.rs                 # Tauri app — server lifecycle, extraction
+  tauri.conf.json            # Tauri config (window, bundling, resources)
+  Cargo.toml                 # Rust dependencies
+  splash/index.html          # Loading screen shown during server startup
+scripts/
+  pack-server.mjs            # Packages Next.js standalone for Tauri bundling
 ```
 
 ## Database Models
