@@ -7,14 +7,15 @@ export async function POST(
   { params }: { params: Promise<{ contextName: string; name: string }> }
 ) {
   const { contextName, name } = await params;
+  const ctx = decodeURIComponent(contextName);
   const { searchParams } = new URL(request.url);
   const namespace = searchParams.get("namespace") || "default";
 
   try {
-    const batchApi = getBatchApi(contextName);
+    const batchApi = getBatchApi(ctx);
 
     // Get the CronJob
-    const { body: cronJob } = await batchApi.readNamespacedCronJob(name, namespace);
+    const cronJob = await batchApi.readNamespacedCronJob({ name, namespace });
 
     // Create Job from CronJob template
     const timestamp = Math.floor(Date.now() / 1000);
@@ -42,7 +43,7 @@ export async function POST(
       spec: cronJob.spec!.jobTemplate.spec,
     };
 
-    const { body: created } = await batchApi.createNamespacedJob(namespace, job);
+    const created = await batchApi.createNamespacedJob({ namespace, body: job });
     return NextResponse.json({ success: true, jobName: created.metadata?.name });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Failed to trigger CronJob";

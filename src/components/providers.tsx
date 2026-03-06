@@ -3,6 +3,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useState } from "react";
 import { ToastProvider } from "@/components/ui/toast";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import { ErrorBoundary } from "@/components/error-boundary";
 import { CommandPalette } from "@/components/command-palette";
 import { useKeyboardShortcuts } from "@/hooks/use-keyboard-shortcuts";
@@ -26,10 +27,12 @@ export function Providers({ children }: { children: React.ReactNode }) {
   return (
     <QueryClientProvider client={queryClient}>
       <ToastProvider>
-        <ErrorBoundary>
-          {children}
-          <CommandPalette />
-        </ErrorBoundary>
+        <TooltipProvider>
+          <ErrorBoundary>
+            {children}
+            <CommandPalette />
+          </ErrorBoundary>
+        </TooltipProvider>
       </ToastProvider>
     </QueryClientProvider>
   );
