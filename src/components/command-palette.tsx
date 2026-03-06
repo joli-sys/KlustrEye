@@ -68,13 +68,13 @@ export function CommandPalette() {
         items.push({
           type: "page",
           label: item.label,
-          href: `/clusters/${contextName ? encodeURIComponent(contextName) : ""}/${item.href}`,
+          href: `/clusters/${ctx ? encodeURIComponent(ctx) : ""}/${item.href}`,
           section: section.title,
         });
       }
     }
     return items;
-  }, [contextName]);
+  }, [ctx]);
 
   const filteredPages = useMemo(() => {
     if (!query) return pageItems;
