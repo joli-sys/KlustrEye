@@ -1,6 +1,6 @@
 [package]
 name = "klustreye"
-version = "0.0.14"
+version = "0.1.0"
 description = "KlustrEye — a Kubernetes IDE"
 authors = []
 license = "MIT"
