@@ -88,9 +88,29 @@ fn ensure_server_extracted(resource_dir: &PathBuf, app_data: &PathBuf) -> PathBu
 
     let decoder = flate2::read::GzDecoder::new(file);
     let mut archive = tar::Archive::new(decoder);
-    archive
-        .unpack(&server_dir)
-        .expect("Failed to extract server pack");
+
+    // On Windows: don't try to set Unix permissions (unsupported) and use
+    // long path prefix (\\?\) to handle node_modules paths > 260 chars.
+    archive.set_preserve_permissions(false);
+    archive.set_preserve_mtime(false);
+
+    if cfg!(windows) {
+        // Use \\?\ prefix on the target dir to enable long paths
+        let long_server_dir = PathBuf::from(format!(
+            "\\\\?\\{}",
+            server_dir
+                .canonicalize()
+                .unwrap_or_else(|_| server_dir.clone())
+                .display()
+        ));
+        archive
+            .unpack(&long_server_dir)
+            .expect("Failed to extract server pack");
+    } else {
+        archive
+            .unpack(&server_dir)
+            .expect("Failed to extract server pack");
+    }
 
     // Write version marker
     fs::write(&version_marker, current_version).ok();
@@ -131,9 +151,16 @@ pub fn run() {
             let server_dir = ensure_server_extracted(&resource_dir, &app_data);
 
             // Use the same DB location as the Electron app for migration compatibility
-            let db_dir = dirs::home_dir()
-                .expect("Failed to resolve home dir")
-                .join("Library/Application Support/KlustrEye");
+            let db_dir = if cfg!(target_os = "macos") {
+                dirs::home_dir()
+                    .expect("Failed to resolve home dir")
+                    .join("Library/Application Support/KlustrEye")
+            } else {
+                // Windows: %APPDATA%/KlustrEye, Linux: ~/.config/KlustrEye
+                dirs::config_dir()
+                    .expect("Failed to resolve config dir")
+                    .join("KlustrEye")
+            };
             fs::create_dir_all(&db_dir).ok();
             let db_url = format!("file:{}/klustreye.db", db_dir.display());
 
@@ -176,6 +203,9 @@ pub fn run() {
             let window = app
                 .get_webview_window("main")
                 .expect("Failed to get main window");
+
+            // Clear webview cache to prevent stale JS chunks after app updates
+            window.clear_all_browsing_data().ok();
 
             std::thread::spawn(move || {
                 if wait_for_server(port, 30000) {

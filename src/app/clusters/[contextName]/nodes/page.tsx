@@ -9,6 +9,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { parseCpuValue, parseMemoryValue, formatBytes, formatCpu } from "@/lib/utils";
 import type { ColumnDef } from "@tanstack/react-table";
 import { useToast } from "@/components/ui/toast";
+import { useConfirm } from "@/components/ui/confirm-dialog";
 
 function UsageBar({ pct, used, total }: { pct: number; used: string; total: string }) {
   return (
@@ -34,6 +35,7 @@ export default function NodesPage({ params }: { params: Promise<{ contextName: s
   const { data: metricsData } = useNodeMetrics(ctx);
   const deleteMutation = useDeleteResource(ctx, "nodes");
   const { addToast } = useToast();
+  const confirm = useConfirm();
 
   const metricsMap = useMemo(() => {
     const map = new Map<string, { cpu: string; memory: string }>();
@@ -291,7 +293,7 @@ export default function NodesPage({ params }: { params: Promise<{ contextName: s
   const handleDelete = async (item: Record<string, unknown>) => {
     const metadata = item.metadata as Record<string, unknown>;
     const name = metadata?.name as string;
-    if (!confirm(`Delete Node "${name}"?`)) return;
+    if (!await confirm({ title: `Delete Node "${name}"?` })) return;
     try {
       await deleteMutation.mutateAsync({ name, namespace: "" });
       addToast({ title: "Deleted Node", description: name, variant: "success" });
@@ -306,7 +308,7 @@ export default function NodesPage({ params }: { params: Promise<{ contextName: s
       return metadata?.name as string;
     });
 
-    if (!confirm(`Delete ${items.length} Nodes?\n\n${names.join("\n")}`)) return;
+    if (!await confirm({ title: `Delete ${items.length} Nodes?`, description: names.join("\n") })) return;
 
     let failed = 0;
     for (const item of items) {

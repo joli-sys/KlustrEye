@@ -9,6 +9,7 @@ import { RESOURCE_REGISTRY, RESOURCE_ROUTE_MAP, getResourceHref, type ResourceKi
 import { Plus, RefreshCw } from "lucide-react";
 import type { ColumnDef } from "@tanstack/react-table";
 import { useToast } from "@/components/ui/toast";
+import { useConfirm } from "@/components/ui/confirm-dialog";
 
 interface ResourceListPageProps {
   contextName: string;
@@ -47,13 +48,14 @@ export function ResourceListPage({
   const { data, isLoading, refetch, isFetching } = useResources(contextName, kind, ns);
   const deleteMutation = useDeleteResource(contextName, kind);
   const { addToast } = useToast();
+  const confirm = useConfirm();
 
   const handleDelete = async (item: Record<string, unknown>) => {
     const metadata = item.metadata as Record<string, unknown>;
     const name = metadata?.name as string;
     const namespace = metadata?.namespace as string;
 
-    if (!confirm(`Delete ${entry.label} "${name}"?`)) return;
+    if (!await confirm({ title: `Delete ${entry.label} "${name}"?` })) return;
 
     try {
       await deleteMutation.mutateAsync({ name, namespace });
@@ -69,7 +71,7 @@ export function ResourceListPage({
       return metadata?.name as string;
     });
 
-    if (!confirm(`Delete ${items.length} ${entry.labelPlural}?\n\n${names.join("\n")}`)) return;
+    if (!await confirm({ title: `Delete ${items.length} ${entry.labelPlural}?`, description: names.join("\n") })) return;
 
     let failed = 0;
     for (const item of items) {

@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { YamlEditor } from "@/components/yaml-editor";
 import { useToast } from "@/components/ui/toast";
+import { useConfirm } from "@/components/ui/confirm-dialog";
 import { ArrowLeft, Eye, RotateCcw, Save, Undo2 } from "lucide-react";
 import { stringify } from "yaml";
 import type { ColumnDef } from "@tanstack/react-table";
@@ -36,6 +37,7 @@ export default function HelmReleasePage({
   const router = useRouter();
   const queryClient = useQueryClient();
   const { addToast } = useToast();
+  const confirm = useConfirm();
   const [tab, setTab] = useState("overview");
   const [editedValues, setEditedValues] = useState<string | null>(null);
   const [previewManifest, setPreviewManifest] = useState<string | null>(null);
@@ -287,9 +289,9 @@ export default function HelmReleasePage({
                   <Button
                     size="sm"
                     disabled={upgrade.isPending}
-                    onClick={() => {
+                    onClick={async () => {
                       const vals = editedValues ?? valuesYaml;
-                      if (confirm(`Upgrade "${releaseName}" with the ${editedValues !== null ? "edited" : "current"} values?`)) {
+                      if (await confirm({ title: `Upgrade "${releaseName}" with the ${editedValues !== null ? "edited" : "current"} values?`, variant: "default", confirmLabel: "Upgrade" })) {
                         upgrade.mutate(vals);
                       }
                     }}
@@ -362,8 +364,8 @@ export default function HelmReleasePage({
                               <Button
                                 variant="ghost"
                                 size="sm"
-                                onClick={() => {
-                                  if (confirm(`Rollback "${releaseName}" to revision ${h.revision}?`)) {
+                                onClick={async () => {
+                                  if (await confirm({ title: `Rollback "${releaseName}" to revision ${h.revision}?`, confirmLabel: "Rollback" })) {
                                     rollback.mutate(h.revision);
                                   }
                                 }}

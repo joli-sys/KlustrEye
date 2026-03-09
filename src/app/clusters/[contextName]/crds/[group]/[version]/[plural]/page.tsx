@@ -6,6 +6,7 @@ import { useClusterNamespace } from "@/hooks/use-cluster-namespace";
 import { ResourceTable, nameColumn, namespaceColumn, ageColumn } from "@/components/resource-table";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/toast";
+import { useConfirm } from "@/components/ui/confirm-dialog";
 import { useSearchParams } from "next/navigation";
 import { YamlEditor } from "@/components/yaml-editor";
 import { parse } from "yaml";
@@ -28,6 +29,7 @@ export default function CRDInstancesPage({ params }: { params: PageParams }) {
   const scope = searchParams.get("scope") || "Namespaced";
   const router = useRouter();
   const { addToast } = useToast();
+  const confirm = useConfirm();
   const selectedNamespace = useClusterNamespace(ctx);
 
   const ns = scope === "Namespaced"
@@ -49,7 +51,7 @@ export default function CRDInstancesPage({ params }: { params: PageParams }) {
     const metadata = item.metadata as Record<string, unknown>;
     const name = metadata?.name as string;
     const namespace = metadata?.namespace as string;
-    if (!confirm(`Delete "${name}"?`)) return;
+    if (!await confirm({ title: `Delete "${name}"?` })) return;
     try {
       await deleteMutation.mutateAsync({ name, namespace });
       addToast({ title: "Deleted", description: name, variant: "success" });

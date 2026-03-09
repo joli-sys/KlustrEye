@@ -15,6 +15,7 @@ import { RESOURCE_REGISTRY } from "@/lib/constants";
 import { stringify, parse } from "yaml";
 import { RelatedEvents } from "@/components/related-events";
 import { Save, Trash2, ArrowLeft } from "lucide-react";
+import { useConfirm } from "@/components/ui/confirm-dialog";
 import Link from "next/link";
 import { RESOURCE_ROUTE_MAP } from "@/lib/constants";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
@@ -42,6 +43,7 @@ export function ResourceDetail({
   const updateMutation = useUpdateResource(contextName, kind);
   const deleteMutation = useDeleteResource(contextName, kind);
   const { addToast } = useToast();
+  const confirm = useConfirm();
   const router = useRouter();
   const currentPathname = usePathname();
   const currentSearchParams = useSearchParams();
@@ -76,7 +78,7 @@ export function ResourceDetail({
   };
 
   const handleDelete = async () => {
-    if (!confirm(`Delete ${entry.label} "${name}"?`)) return;
+    if (!await confirm({ title: `Delete ${entry.label} "${name}"?` })) return;
     try {
       await deleteMutation.mutateAsync({ name, namespace });
       addToast({ title: `Deleted ${entry.label}`, description: name, variant: "success" });

@@ -9,6 +9,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { YamlEditor } from "@/components/yaml-editor";
 import { useToast } from "@/components/ui/toast";
+import { useConfirm } from "@/components/ui/confirm-dialog";
 import { formatAge } from "@/lib/utils";
 import { stringify, parse } from "yaml";
 import { Save, Trash2, ArrowLeft } from "lucide-react";
@@ -31,6 +32,7 @@ export default function CRDInstanceDetailPage({ params }: { params: PageParams }
   const namespace = searchParams.get("ns") || undefined;
   const router = useRouter();
   const { addToast } = useToast();
+  const confirm = useConfirm();
 
   const { data, isLoading, refetch } = useCRDInstance(
     ctx, decodedGroup, version, plural, name, scope, namespace
@@ -57,7 +59,7 @@ export default function CRDInstanceDetailPage({ params }: { params: PageParams }
   };
 
   const handleDelete = async () => {
-    if (!confirm(`Delete "${name}"?`)) return;
+    if (!await confirm({ title: `Delete "${name}"?` })) return;
     try {
       await deleteMutation.mutateAsync({ name, namespace });
       addToast({ title: "Deleted", description: name, variant: "success" });

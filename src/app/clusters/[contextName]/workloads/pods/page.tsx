@@ -12,6 +12,7 @@ import { parseCpuValue, parseMemoryValue, formatBytes, formatCpu } from "@/lib/u
 import { useRouter } from "next/navigation";
 import type { ColumnDef } from "@tanstack/react-table";
 import { useToast } from "@/components/ui/toast";
+import { useConfirm } from "@/components/ui/confirm-dialog";
 import { Plus, RefreshCw } from "lucide-react";
 import Link from "next/link";
 
@@ -45,6 +46,7 @@ export default function PodsPage({ params }: { params: Promise<{ contextName: st
   const { data: metricsData } = usePodMetrics(ctx, ns);
   const deleteMutation = useDeleteResource(ctx, "pods");
   const { addToast } = useToast();
+  const confirm = useConfirm();
 
   const metricsMap = useMemo(() => {
     const map = new Map<string, { cpu: number; memory: number }>();
@@ -200,7 +202,7 @@ export default function PodsPage({ params }: { params: Promise<{ contextName: st
     const metadata = item.metadata as Record<string, unknown>;
     const name = metadata?.name as string;
     const namespace = metadata?.namespace as string;
-    if (!confirm(`Delete Pod "${name}"?`)) return;
+    if (!await confirm({ title: `Delete Pod "${name}"?` })) return;
     try {
       await deleteMutation.mutateAsync({ name, namespace });
       addToast({ title: "Deleted Pod", description: name, variant: "success" });
@@ -215,7 +217,7 @@ export default function PodsPage({ params }: { params: Promise<{ contextName: st
       return metadata?.name as string;
     });
 
-    if (!confirm(`Delete ${items.length} Pods?\n\n${names.join("\n")}`)) return;
+    if (!await confirm({ title: `Delete ${items.length} Pods?`, description: names.join("\n") })) return;
 
     let failed = 0;
     for (const item of items) {

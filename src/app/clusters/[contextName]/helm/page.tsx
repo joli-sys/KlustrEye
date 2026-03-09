@@ -9,6 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/components/ui/toast";
+import { useConfirm } from "@/components/ui/confirm-dialog";
 import { Plus, Trash2 } from "lucide-react";
 import Link from "next/link";
 import type { ColumnDef } from "@tanstack/react-table";
@@ -82,6 +83,7 @@ export default function HelmPage({ params }: { params: Promise<{ contextName: st
   const ns = selectedNamespace === "__all__" ? undefined : selectedNamespace;
   const queryClient = useQueryClient();
   const { addToast } = useToast();
+  const confirm = useConfirm();
   const [installOpen, setInstallOpen] = useState(false);
   const [installForm, setInstallForm] = useState({
     releaseName: "",
@@ -139,8 +141,8 @@ export default function HelmPage({ params }: { params: Promise<{ contextName: st
     },
   });
 
-  const handleDelete = (item: Record<string, unknown>) => {
-    if (!confirm(`Uninstall Helm release "${item.name}"?`)) return;
+  const handleDelete = async (item: Record<string, unknown>) => {
+    if (!await confirm({ title: `Uninstall Helm release "${item.name}"?` })) return;
     uninstallMutation.mutate({ name: item.name as string, namespace: item.namespace as string });
   };
 
