@@ -199,12 +199,32 @@ pub fn run() {
                 child: Mutex::new(Some(child)),
             });
 
+            // Clear WebKit cache to prevent stale JS chunks after app updates.
+            // WKWebView persists HTTP cache across launches, causing old chunk
+            // hashes to be served after rebuilds.
+            if let Some(cache_dir) = dirs::cache_dir() {
+                for name in &["com.klustreye.desktop", "klustreye", "com.klustreye.app"] {
+                    let p = cache_dir.join(name);
+                    if p.exists() {
+                        let _ = fs::remove_dir_all(&p);
+                    }
+                }
+            }
+            if let Some(home) = dirs::home_dir() {
+                let webkit_dir = home.join("Library/WebKit");
+                for name in &["com.klustreye.desktop", "klustreye", "com.klustreye.app"] {
+                    let p = webkit_dir.join(name);
+                    if p.exists() {
+                        let _ = fs::remove_dir_all(&p);
+                    }
+                }
+            }
+
             // Wait for server then navigate the window
             let window = app
                 .get_webview_window("main")
                 .expect("Failed to get main window");
 
-            // Clear webview cache to prevent stale JS chunks after app updates
             window.clear_all_browsing_data().ok();
 
             std::thread::spawn(move || {
