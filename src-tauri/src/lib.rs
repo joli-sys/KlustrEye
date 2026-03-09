@@ -95,14 +95,20 @@ fn ensure_server_extracted(resource_dir: &PathBuf, app_data: &PathBuf) -> PathBu
     archive.set_preserve_mtime(false);
 
     if cfg!(windows) {
-        // Use \\?\ prefix on the target dir to enable long paths
-        let long_server_dir = PathBuf::from(format!(
-            "\\\\?\\{}",
-            server_dir
-                .canonicalize()
-                .unwrap_or_else(|_| server_dir.clone())
-                .display()
-        ));
+        // Use \\?\ prefix on the target dir to enable long paths (>260 chars).
+        // canonicalize() on Windows already returns \\?\-prefixed paths,
+        // so only add the prefix when canonicalize fails.
+        let abs_path = server_dir
+            .canonicalize()
+            .unwrap_or_else(|_| server_dir.clone());
+        let long_server_dir = {
+            let s = abs_path.to_string_lossy();
+            if s.starts_with("\\\\?\\") {
+                abs_path
+            } else {
+                PathBuf::from(format!("\\\\?\\{}", s))
+            }
+        };
         archive
             .unpack(&long_server_dir)
             .expect("Failed to extract server pack");
@@ -162,7 +168,9 @@ pub fn run() {
                     .join("KlustrEye")
             };
             fs::create_dir_all(&db_dir).ok();
-            let db_url = format!("file:{}/klustreye.db", db_dir.display());
+            // Use forward slashes in the SQLite URI — backslashes break Prisma on Windows
+            let db_path = db_dir.join("klustreye.db");
+            let db_url = format!("file:{}", db_path.to_string_lossy().replace('\\', "/"));
 
             let server_bundle = server_dir.join("server.bundle.mjs");
 
@@ -182,6 +190,7 @@ pub fn run() {
             eprintln!("[tauri] Starting server on port {}", port);
             eprintln!("[tauri] Node binary: {}", node_cmd);
             eprintln!("[tauri] Server dir: {}", server_dir.display());
+            eprintln!("[tauri] Database URL: {}", db_url);
 
             let child = Command::new(&node_cmd)
                 .arg(&server_bundle)
@@ -199,9 +208,7 @@ pub fn run() {
                 child: Mutex::new(Some(child)),
             });
 
-            // Clear WebKit cache to prevent stale JS chunks after app updates.
-            // WKWebView persists HTTP cache across launches, causing old chunk
-            // hashes to be served after rebuilds.
+            // Clear webview cache to prevent stale JS chunks after app updates.
             if let Some(cache_dir) = dirs::cache_dir() {
                 for name in &["com.klustreye.desktop", "klustreye", "com.klustreye.app"] {
                     let p = cache_dir.join(name);
@@ -210,13 +217,23 @@ pub fn run() {
                     }
                 }
             }
-            if let Some(home) = dirs::home_dir() {
-                let webkit_dir = home.join("Library/WebKit");
-                for name in &["com.klustreye.desktop", "klustreye", "com.klustreye.app"] {
-                    let p = webkit_dir.join(name);
-                    if p.exists() {
-                        let _ = fs::remove_dir_all(&p);
+            // macOS: also clear WebKit data store cache
+            if cfg!(target_os = "macos") {
+                if let Some(home) = dirs::home_dir() {
+                    let webkit_dir = home.join("Library/WebKit");
+                    for name in &["com.klustreye.desktop", "klustreye", "com.klustreye.app"] {
+                        let p = webkit_dir.join(name);
+                        if p.exists() {
+                            let _ = fs::remove_dir_all(&p);
+                        }
                     }
+                }
+            }
+            // Windows: clear WebView2 cache
+            if cfg!(windows) {
+                let webview_data = app_data.join("EBWebView");
+                if webview_data.exists() {
+                    let _ = fs::remove_dir_all(&webview_data);
                 }
             }
 
