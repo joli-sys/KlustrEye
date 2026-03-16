@@ -1,7 +1,7 @@
-"use client";
+
 
 import { useState, useRef, useEffect, useMemo } from "react";
-import { usePathname, useRouter } from "next/navigation";
+import { useLocation, useNavigate } from "react-router-dom";
 import { useClusters } from "@/hooks/use-clusters";
 import { RenameContextDialog } from "@/components/rename-context-dialog";
 import { cn } from "@/lib/utils";
@@ -30,8 +30,8 @@ export function ClusterSwitcher({
   const ref = useRef<HTMLDivElement>(null);
   const filterInputRef = useRef<HTMLInputElement>(null);
   const [highlightedIndex, setHighlightedIndex] = useState(0);
-  const pathname = usePathname();
-  const router = useRouter();
+  const pathname = useLocation().pathname;
+  const navigate = useNavigate();
   const { data: clusters } = useClusters();
 
   const current = clusters?.find((c) => c.name === contextName);
@@ -172,7 +172,7 @@ export function ClusterSwitcher({
       `/clusters/${currentEncoded}`,
       `/clusters/${encoded}`
     );
-    router.push(newPath);
+    navigate(newPath);
     setOpen(false);
   }
 

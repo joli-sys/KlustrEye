@@ -1,11 +1,9 @@
-"use client";
-
-import { use, useMemo } from "react";
-import { useSearchParams } from "next/navigation";
+import { useMemo } from "react";
+import { useSearchParams, useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { ResourceDetail } from "@/components/resource-detail";
 import { useResource } from "@/hooks/use-resources";
-import Link from "next/link";
+import { Link } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -45,10 +43,10 @@ function useServiceEndpoints(contextName: string, name: string, namespace: strin
   });
 }
 
-export default function ServiceDetailPage({ params }: { params: Promise<{ contextName: string; name: string }> }) {
-  const { contextName, name } = use(params);
+export default function ServiceDetailPage() {
+  const { contextName = "", name = "" } = useParams();
   const ctx = decodeURIComponent(contextName);
-  const searchParams = useSearchParams();
+  const [searchParams] = useSearchParams();
   const namespace = searchParams.get("ns") || "default";
 
   const { data } = useResource(ctx, "services", name, namespace);
@@ -240,7 +238,7 @@ function EndpointTargetRef({
   if (kind) {
     const href = getResourceHref(contextName, kind, targetRef.name, targetRef.namespace);
     return (
-      <Link href={href}>
+      <Link to={href}>
         <Badge variant="secondary" className="text-xs hover:bg-accent cursor-pointer">
           {targetRef.kind}/{targetRef.name}
         </Badge>

@@ -1,4 +1,4 @@
-"use client";
+
 
 import { useState, useRef, useEffect, useMemo } from "react";
 import { useNamespaces, useClusters } from "@/hooks/use-clusters";

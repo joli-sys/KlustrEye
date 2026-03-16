@@ -1,7 +1,6 @@
-"use client";
-
-import { use } from "react";
+;
 import { ResourceListPage } from "@/components/resource-list-page";
+import { useParams } from "react-router-dom";
 import { nameColumn, ageColumn } from "@/components/resource-table";
 import type { ColumnDef } from "@tanstack/react-table";
 
@@ -23,7 +22,7 @@ const columns: ColumnDef<Record<string, unknown>>[] = [
   ageColumn(),
 ];
 
-export default function ClusterRoleBindingsPage({ params }: { params: Promise<{ contextName: string }> }) {
-  const { contextName } = use(params);
+export default function ClusterRoleBindingsPage() {
+  const { contextName = "" } = useParams();
   return <ResourceListPage contextName={decodeURIComponent(contextName)} kind="clusterrolebindings" columns={columns} />;
 }

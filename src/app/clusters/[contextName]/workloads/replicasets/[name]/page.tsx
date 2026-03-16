@@ -1,7 +1,5 @@
-"use client";
-
-import { use, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { useState } from "react";
+import { useSearchParams, useParams } from "react-router-dom";
 import { ResourceDetail } from "@/components/resource-detail";
 import { useResource } from "@/hooks/use-resources";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -10,10 +8,10 @@ import { ScaleDialog } from "@/components/scale-dialog";
 import { EditResourcesDialog } from "@/components/edit-resources-dialog";
 import { Scaling, Cpu } from "lucide-react";
 
-export default function ReplicaSetDetailPage({ params }: { params: Promise<{ contextName: string; name: string }> }) {
-  const { contextName, name } = use(params);
+export default function ReplicaSetDetailPage() {
+  const { contextName = "", name = "" } = useParams();
   const ctx = decodeURIComponent(contextName);
-  const searchParams = useSearchParams();
+  const [searchParams] = useSearchParams();
   const namespace = searchParams.get("ns") || "default";
   const [scaleOpen, setScaleOpen] = useState(false);
   const [editResourcesOpen, setEditResourcesOpen] = useState(false);

@@ -1,14 +1,13 @@
-"use client";
-
-import { use } from "react";
+;
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { useParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { usePortForwards, useStopPortForward } from "@/hooks/use-port-forward";
 import { Cable, ExternalLink, Square } from "lucide-react";
 
-export default function PortForwardsPage({ params }: { params: Promise<{ contextName: string }> }) {
-  const { contextName } = use(params);
+export default function PortForwardsPage() {
+  const { contextName = "" } = useParams();
   const ctx = decodeURIComponent(contextName);
   const { data: forwards, isLoading } = usePortForwards(ctx);
   const stopMutation = useStopPortForward(ctx);

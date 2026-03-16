@@ -1,5 +1,3 @@
-"use client";
-
 import { Handle, Position } from "@xyflow/react";
 import { Globe, Network, Box, Route } from "lucide-react";
 import type { NetworkNodeData } from "./use-network-graph";

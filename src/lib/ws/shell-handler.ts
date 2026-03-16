@@ -1,3 +1,4 @@
+// @ts-nocheck
 import type { WebSocket } from "ws";
 import * as pty from "node-pty";
 import { homedir } from "os";

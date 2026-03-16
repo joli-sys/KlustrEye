@@ -1,17 +1,15 @@
-"use client";
-
-import { use, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { useState } from "react";
+import { useSearchParams, useParams } from "react-router-dom";
 import { ResourceDetail } from "@/components/resource-detail";
 import { useResource } from "@/hooks/use-resources";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Eye, EyeOff } from "lucide-react";
 
-export default function SecretDetailPage({ params }: { params: Promise<{ contextName: string; name: string }> }) {
-  const { contextName, name } = use(params);
+export default function SecretDetailPage() {
+  const { contextName = "", name = "" } = useParams();
   const ctx = decodeURIComponent(contextName);
-  const searchParams = useSearchParams();
+  const [searchParams] = useSearchParams();
   const namespace = searchParams.get("ns") || "default";
   const { data } = useResource(ctx, "secrets", name, namespace);
   const secretData = (data?.data as Record<string, string>) || {};

@@ -43,7 +43,7 @@ jobs:
     uses: ./.github/workflows/rc-build-platform.yml
     with:
       platform: macos-x64
-      runner: macos-13
+      runner: macos-latest
       rust-target: x86_64-apple-darwin
       node-platform: darwin
       node-arch: x64

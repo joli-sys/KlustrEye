@@ -1,5 +1,3 @@
-"use client";
-
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { useClusters } from "@/hooks/use-clusters";
 import { useOrganizations } from "@/hooks/use-organizations";
@@ -15,7 +13,7 @@ import { Input } from "@/components/ui/input";
 import { COLOR_PRESETS, DEFAULT_COLOR_SCHEME } from "@/lib/color-presets";
 import { Server, AlertCircle, Pencil, Network, User, Box, FolderOpen, Settings, ChevronDown, ChevronRight, Loader2, Search } from "lucide-react";
 import { CloudProviderIcon } from "@/components/cloud-provider-icon";
-import Link from "next/link";
+import { Link } from "react-router-dom";
 import type { ClusterContext } from "@/hooks/use-clusters";
 
 export default function HomePage() {
@@ -90,7 +88,7 @@ export default function HomePage() {
   function renderClusterCard(ctx: ClusterContext) {
     return (
       <div key={ctx.name} className="relative group">
-        <Link href={`/clusters/${encodeURIComponent(ctx.name)}/overview`}>
+        <Link to={`/clusters/${encodeURIComponent(ctx.name)}/overview`}>
           <Card className="hover:border-primary/50 transition-colors cursor-pointer h-full">
             <CardContent className="pt-6">
               <div className="flex items-start gap-4">

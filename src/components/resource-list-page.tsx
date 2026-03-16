@@ -1,4 +1,4 @@
-"use client";
+
 
 
 import { useResources, useDeleteResource } from "@/hooks/use-resources";

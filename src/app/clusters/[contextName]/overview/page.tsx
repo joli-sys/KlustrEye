@@ -1,6 +1,4 @@
-"use client";
-
-import { use, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useClusterInfo } from "@/hooks/use-clusters";
 import { useResources } from "@/hooks/use-resources";
 import { useNodeMetrics } from "@/hooks/use-metrics";
@@ -12,7 +10,7 @@ import { Server, Box, Layers, Network, Cpu, MemoryStick, AlertTriangle, Info, Al
 import { CloudProviderIcon } from "@/components/cloud-provider-icon";
 import { parseCpuValue, parseMemoryValue, formatBytes, formatCpu, formatAge } from "@/lib/utils";
 import { getResourceHref } from "@/lib/constants";
-import Link from "next/link";
+import { Link, useParams } from "react-router-dom";
 
 const SINGULAR_TO_PLURAL: Record<string, string> = {
   Pod: "pods", Deployment: "deployments", StatefulSet: "statefulsets", DaemonSet: "daemonsets",
@@ -53,8 +51,8 @@ function ClusterResourceBar({ label, icon: Icon, used, total, formatFn, color }:
   );
 }
 
-export default function OverviewPage({ params }: { params: Promise<{ contextName: string }> }) {
-  const { contextName } = use(params);
+export default function OverviewPage() {
+  const { contextName = "" } = useParams();
   const ctx = decodeURIComponent(contextName);
   const { data: clusterInfo, isLoading: infoLoading } = useClusterInfo(ctx);
   const selectedNamespace = useClusterNamespace(ctx);
@@ -223,7 +221,7 @@ export default function OverviewPage({ params }: { params: Promise<{ contextName
                 </Badge>
               </button>
               <Link
-                href={`/clusters/${encodeURIComponent(ctx)}/events`}
+                to={`/clusters/${encodeURIComponent(ctx)}/events`}
                 className="text-xs text-primary hover:underline"
               >
                 View all
@@ -258,7 +256,7 @@ export default function OverviewPage({ params }: { params: Promise<{ contextName
                               {reason}
                             </Badge>
                             {objHref ? (
-                              <Link href={objHref} className="text-xs text-primary hover:underline">
+                              <Link to={objHref} className="text-xs text-primary hover:underline">
                                 {objKind}/{objName}
                               </Link>
                             ) : (
@@ -303,7 +301,7 @@ export default function OverviewPage({ params }: { params: Promise<{ contextName
                       <Server className="h-4 w-4 text-muted-foreground shrink-0" />
                       <div className="min-w-0">
                         <Link
-                          href={`/clusters/${encodeURIComponent(ctx)}/nodes/${encodeURIComponent(nodeName)}`}
+                          to={`/clusters/${encodeURIComponent(ctx)}/nodes/${encodeURIComponent(nodeName)}`}
                           className="font-medium text-sm truncate text-primary hover:underline block"
                         >
                           {nodeName}

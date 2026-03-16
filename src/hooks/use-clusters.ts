@@ -1,5 +1,3 @@
-"use client";
-
 import { useQuery } from "@tanstack/react-query";
 
 import type { CloudProvider } from "@/lib/k8s/provider";

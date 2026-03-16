@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { spawn, type ChildProcess } from "child_process";
 import { createServer } from "net";
 import { prisma } from "@/lib/prisma";

@@ -1,6 +1,5 @@
-"use client";
-
-import { use, useState } from "react";
+import { useState } from "react";
+import { useParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -16,8 +15,8 @@ import { cn } from "@/lib/utils";
 
 const plugins = getPlugins();
 
-export default function SettingsPage({ params }: { params: Promise<{ contextName: string }> }) {
-  const { contextName } = use(params);
+export default function SettingsPage() {
+  const { contextName = "" } = useParams();
   const ctx = decodeURIComponent(contextName);
   const { addToast } = useToast();
 

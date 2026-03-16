@@ -1,15 +1,12 @@
-"use client";
+import { lazy, Suspense, useCallback, useRef, useState } from "react";
 
-import { useCallback, useRef, useState } from "react";
-import dynamic from "next/dynamic";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { RotateCw, X, Maximize2, Minimize2 } from "lucide-react";
 import { useUIStore } from "@/lib/stores/ui-store";
 
-const TerminalComponent = dynamic(
-  () => import("./terminal-inner").then((m) => m.TerminalInner),
-  { ssr: false, loading: () => <Skeleton className="h-full w-full" /> }
+const TerminalComponent = lazy(
+  () => import("./terminal-inner").then((m) => ({ default: m.TerminalInner }))
 );
 
 interface ClusterShellTerminalProps {
@@ -106,12 +103,14 @@ export function ClusterShellTerminal({ contextName }: ClusterShellTerminalProps)
       {/* Terminal */}
       <div className="flex-1 overflow-hidden">
         {wsUrl && (
-          <TerminalComponent
-            key={`${contextName}-${key}`}
-            wsUrl={wsUrl}
-            className="h-full"
-            connectMessage=""
-          />
+          <Suspense fallback={<Skeleton className="h-full w-full" />}>
+            <TerminalComponent
+              key={`${contextName}-${key}`}
+              wsUrl={wsUrl}
+              className="h-full"
+              connectMessage=""
+            />
+          </Suspense>
         )}
       </div>
     </div>

@@ -1,6 +1,5 @@
-"use client";
-
-import { use, useMemo } from "react";
+import { useMemo } from "react";
+import { useParams } from "react-router-dom";
 import { useResources, useDeleteResource } from "@/hooks/use-resources";
 import { useNodeMetrics } from "@/hooks/use-metrics";
 import { ResourceTable, nameColumn, ageColumn, statusBadge } from "@/components/resource-table";
@@ -28,8 +27,8 @@ function UsageBar({ pct, used, total }: { pct: number; used: string; total: stri
   );
 }
 
-export default function NodesPage({ params }: { params: Promise<{ contextName: string }> }) {
-  const { contextName } = use(params);
+export default function NodesPage() {
+  const { contextName = "" } = useParams();
   const ctx = decodeURIComponent(contextName);
   const { data, isLoading } = useResources(ctx, "nodes");
   const { data: metricsData } = useNodeMetrics(ctx);

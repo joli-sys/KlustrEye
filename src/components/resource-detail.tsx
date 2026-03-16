@@ -1,4 +1,4 @@
-"use client";
+
 
 import { useState } from "react";
 import { useResource, useUpdateResource, useDeleteResource } from "@/hooks/use-resources";
@@ -16,9 +16,9 @@ import { stringify, parse } from "yaml";
 import { RelatedEvents } from "@/components/related-events";
 import { Save, Trash2, ArrowLeft } from "lucide-react";
 import { useConfirm } from "@/components/ui/confirm-dialog";
-import Link from "next/link";
+import { Link } from "react-router-dom";
 import { RESOURCE_ROUTE_MAP } from "@/lib/constants";
-import { useRouter, usePathname, useSearchParams } from "next/navigation";
+import { useNavigate, useLocation, useSearchParams } from "react-router-dom";
 
 interface ResourceDetailProps {
   contextName: string;
@@ -44,9 +44,9 @@ export function ResourceDetail({
   const deleteMutation = useDeleteResource(contextName, kind);
   const { addToast } = useToast();
   const confirm = useConfirm();
-  const router = useRouter();
-  const currentPathname = usePathname();
-  const currentSearchParams = useSearchParams();
+  const navigate = useNavigate();
+  const currentPathname = useLocation().pathname;
+  const [currentSearchParams] = useSearchParams();
 
   // Compute parent list URL by stripping the last path segment (resource name)
   const parentUrl = (() => {
@@ -82,7 +82,7 @@ export function ResourceDetail({
     try {
       await deleteMutation.mutateAsync({ name, namespace });
       addToast({ title: `Deleted ${entry.label}`, description: name, variant: "success" });
-      router.push(parentUrl);
+      navigate(parentUrl);
     } catch (err) {
       addToast({ title: "Delete failed", description: (err as Error).message, variant: "destructive" });
     }
@@ -110,7 +110,7 @@ export function ResourceDetail({
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <Button variant="ghost" size="icon" onClick={() => router.push(parentUrl)}>
+          <Button variant="ghost" size="icon" onClick={() => navigate(parentUrl)}>
             <ArrowLeft className="h-4 w-4" />
           </Button>
           <div>
@@ -270,7 +270,7 @@ function OwnerRefRow({
         <Badge variant="outline" className="text-[10px] mr-1.5">{owner.kind}</Badge>
         {route?.hasDetail ? (
           <Link
-            href={`/clusters/${encodeURIComponent(contextName)}/${route.path}/${encodeURIComponent(owner.name)}${namespace ? `?ns=${encodeURIComponent(namespace)}` : ""}`}
+            to={`/clusters/${encodeURIComponent(contextName)}/${route.path}/${encodeURIComponent(owner.name)}${namespace ? `?ns=${encodeURIComponent(namespace)}` : ""}`}
             className="font-mono text-primary hover:underline"
           >
             {owner.name}

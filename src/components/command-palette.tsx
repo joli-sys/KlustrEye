@@ -1,7 +1,7 @@
-"use client";
+
 
 import { useState, useEffect, useRef, useMemo, useCallback } from "react";
-import { useRouter, useParams } from "next/navigation";
+import { useNavigate, useParams } from "react-router-dom";
 import { useUIStore } from "@/lib/stores/ui-store";
 import { useSavedSearches } from "@/lib/stores/saved-searches-store";
 import { SIDEBAR_SECTIONS, getResourceHref, RESOURCE_ROUTE_MAP, RESOURCE_REGISTRY, type ResourceKind } from "@/lib/constants";
@@ -32,7 +32,7 @@ export function CommandPalette() {
   const [selectedIndex, setSelectedIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
-  const router = useRouter();
+  const routerNavigate = useNavigate();
   const params = useParams();
   const contextName = params?.contextName as string;
   const ctx = contextName ? decodeURIComponent(contextName) : "";
@@ -132,10 +132,10 @@ export function CommandPalette() {
       if (item.type === "favorite" && ctx) {
         setClusterNamespace(ctx, item.namespace ?? "__all__");
       }
-      router.push(item.href);
+      routerNavigate(item.href);
       setCommandPaletteOpen(false);
     },
-    [router, setCommandPaletteOpen, setClusterNamespace, ctx]
+    [routerNavigate, setCommandPaletteOpen, setClusterNamespace, ctx]
   );
 
   const handleKeyDown = (e: React.KeyboardEvent) => {

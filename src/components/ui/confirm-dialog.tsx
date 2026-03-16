@@ -1,5 +1,3 @@
-"use client";
-
 import * as React from "react";
 import { createContext, useContext, useState, useCallback, useRef } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "./dialog";

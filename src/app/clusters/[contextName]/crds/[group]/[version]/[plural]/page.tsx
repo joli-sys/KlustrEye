@@ -1,33 +1,24 @@
-"use client";
-
-import { use, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useCRDInstances, useDeleteCRDInstance, useCreateCRDInstance } from "@/hooks/use-crds";
 import { useClusterNamespace } from "@/hooks/use-cluster-namespace";
 import { ResourceTable, nameColumn, namespaceColumn, ageColumn } from "@/components/resource-table";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/toast";
 import { useConfirm } from "@/components/ui/confirm-dialog";
-import { useSearchParams } from "next/navigation";
+import { useSearchParams, useParams } from "react-router-dom";
 import { YamlEditor } from "@/components/yaml-editor";
 import { parse } from "yaml";
 import { RefreshCw, Plus, ArrowLeft } from "lucide-react";
-import { useRouter } from "next/navigation";
+import { useNavigate } from "react-router-dom";
 import type { ColumnDef } from "@tanstack/react-table";
 
-type PageParams = Promise<{
-  contextName: string;
-  group: string;
-  version: string;
-  plural: string;
-}>;
-
-export default function CRDInstancesPage({ params }: { params: PageParams }) {
-  const { contextName, group, version, plural } = use(params);
+export default function CRDInstancesPage() {
+  const { contextName = "", group = "", version = "", plural = "" } = useParams();
   const ctx = decodeURIComponent(contextName);
   const decodedGroup = decodeURIComponent(group);
-  const searchParams = useSearchParams();
+  const [searchParams] = useSearchParams();
   const scope = searchParams.get("scope") || "Namespaced";
-  const router = useRouter();
+  const navigate = useNavigate();
   const { addToast } = useToast();
   const confirm = useConfirm();
   const selectedNamespace = useClusterNamespace(ctx);
@@ -64,7 +55,7 @@ export default function CRDInstancesPage({ params }: { params: PageParams }) {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <Button variant="ghost" size="icon" onClick={() => router.push(`/clusters/${encodeURIComponent(ctx)}/crds`)}>
+          <Button variant="ghost" size="icon" onClick={() => navigate(`/clusters/${encodeURIComponent(ctx)}/crds`)}>
             <ArrowLeft className="h-4 w-4" />
           </Button>
           <div>

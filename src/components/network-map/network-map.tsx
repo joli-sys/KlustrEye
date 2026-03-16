@@ -1,5 +1,3 @@
-"use client";
-
 import { useMemo, useCallback } from "react";
 import {
   ReactFlow,
@@ -12,7 +10,7 @@ import {
   type NodeMouseHandler,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { useRouter } from "next/navigation";
+import { useNavigate } from "react-router-dom";
 import { useNetworkGraph, type NetworkNodeData } from "./use-network-graph";
 import { layoutGraph } from "./layout";
 import { nodeTypes } from "./custom-nodes";
@@ -20,7 +18,7 @@ import { getResourceHref } from "@/lib/constants";
 import { Share2 } from "lucide-react";
 
 export function NetworkMap({ contextName }: { contextName: string }) {
-  const router = useRouter();
+  const navigate = useNavigate();
   const { nodes: rawNodes, edges: rawEdges, isLoading } = useNetworkGraph(contextName);
 
   const layoutedNodes = useMemo(
@@ -52,10 +50,10 @@ export function NetworkMap({ contextName }: { contextName: string }) {
       const kind = kindMap[data.kind];
       if (kind) {
         const href = getResourceHref(contextName, kind, data.resourceName, data.namespace);
-        router.push(href);
+        navigate(href);
       }
     },
-    [contextName, router]
+    [contextName, navigate]
   );
 
   if (isLoading) {

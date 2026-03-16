@@ -1,7 +1,5 @@
-"use client";
-
-import { use, useMemo, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { useMemo, useState } from "react";
+import { useSearchParams, useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { ResourceDetail } from "@/components/resource-detail";
 import { useResource } from "@/hooks/use-resources";
@@ -18,7 +16,7 @@ import { parseCpuValue, parseMemoryValue, formatBytes, formatCpu } from "@/lib/u
 import { getPluginsWithResourceExtension } from "@/lib/plugins/registry";
 import { EditResourcesDialog } from "@/components/edit-resources-dialog";
 import { Eye, EyeOff, Cpu } from "lucide-react";
-import Link from "next/link";
+import { Link } from "react-router-dom";
 
 const podPlugins = getPluginsWithResourceExtension("pods");
 
@@ -164,7 +162,7 @@ function EnvFromSecretExpander({
         </svg>
         <Badge variant="outline" className="text-[10px]">Secret</Badge>
         <Link
-          href={`/clusters/${encodeURIComponent(contextName)}/config/secrets/${encodeURIComponent(secretName)}?ns=${encodeURIComponent(namespace)}`}
+          to={`/clusters/${encodeURIComponent(contextName)}/config/secrets/${encodeURIComponent(secretName)}?ns=${encodeURIComponent(namespace)}`}
           className="font-mono text-primary hover:underline"
           onClick={(e) => e.stopPropagation()}
         >
@@ -345,7 +343,7 @@ function EnvVarsCard({
                               <div className="flex items-center gap-2 text-xs py-1">
                                 <Badge variant="outline" className="text-[10px]">ConfigMap</Badge>
                                 <Link
-                                  href={`/clusters/${encodeURIComponent(contextName)}/config/configmaps/${encodeURIComponent(src.configMapRef.name)}?ns=${encodeURIComponent(namespace)}`}
+                                  to={`/clusters/${encodeURIComponent(contextName)}/config/configmaps/${encodeURIComponent(src.configMapRef.name)}?ns=${encodeURIComponent(namespace)}`}
                                   className="font-mono text-primary hover:underline"
                                 >
                                   {src.configMapRef.name}
@@ -388,10 +386,10 @@ function EnvVarsCard({
   );
 }
 
-export default function PodDetailPage({ params }: { params: Promise<{ contextName: string; name: string }> }) {
-  const { contextName, name } = use(params);
+export default function PodDetailPage() {
+  const { contextName = "", name = "" } = useParams();
   const ctx = decodeURIComponent(contextName);
-  const searchParams = useSearchParams();
+  const [searchParams] = useSearchParams();
   const namespace = searchParams.get("ns") || "default";
 
   const [editResourcesOpen, setEditResourcesOpen] = useState(false);
@@ -563,7 +561,7 @@ export default function PodDetailPage({ params }: { params: Promise<{ contextNam
               <span className="text-muted-foreground">Node</span>
               {spec.nodeName ? (
                 <Link
-                  href={`/clusters/${encodeURIComponent(ctx)}/nodes/${encodeURIComponent(spec.nodeName as string)}`}
+                  to={`/clusters/${encodeURIComponent(ctx)}/nodes/${encodeURIComponent(spec.nodeName as string)}`}
                   className="text-primary hover:underline"
                 >
                   {spec.nodeName as string}
@@ -580,7 +578,7 @@ export default function PodDetailPage({ params }: { params: Promise<{ contextNam
               <span className="text-muted-foreground">Service Account</span>
               {spec.serviceAccountName ? (
                 <Link
-                  href={`/clusters/${encodeURIComponent(ctx)}/config/serviceaccounts/${encodeURIComponent(spec.serviceAccountName as string)}?ns=${encodeURIComponent(namespace)}`}
+                  to={`/clusters/${encodeURIComponent(ctx)}/config/serviceaccounts/${encodeURIComponent(spec.serviceAccountName as string)}?ns=${encodeURIComponent(namespace)}`}
                   className="text-primary hover:underline font-mono text-xs"
                 >
                   {spec.serviceAccountName as string}
@@ -791,7 +789,7 @@ export default function PodDetailPage({ params }: { params: Promise<{ contextNam
                       <div>
                         {v.type === "PVC" && v.detail && (
                           <Link
-                            href={`/clusters/${encodeURIComponent(ctx)}/storage/persistentvolumeclaims/${encodeURIComponent(v.detail.claimName as string)}?ns=${encodeURIComponent(namespace)}`}
+                            to={`/clusters/${encodeURIComponent(ctx)}/storage/persistentvolumeclaims/${encodeURIComponent(v.detail.claimName as string)}?ns=${encodeURIComponent(namespace)}`}
                             className="text-primary hover:underline text-sm"
                           >
                             {v.detail.claimName as string}
@@ -799,7 +797,7 @@ export default function PodDetailPage({ params }: { params: Promise<{ contextNam
                         )}
                         {v.type === "ConfigMap" && v.detail && (
                           <Link
-                            href={`/clusters/${encodeURIComponent(ctx)}/config/configmaps/${encodeURIComponent((v.detail.name as string) || "")}?ns=${encodeURIComponent(namespace)}`}
+                            to={`/clusters/${encodeURIComponent(ctx)}/config/configmaps/${encodeURIComponent((v.detail.name as string) || "")}?ns=${encodeURIComponent(namespace)}`}
                             className="text-primary hover:underline text-sm"
                           >
                             {v.detail.name as string}
@@ -807,7 +805,7 @@ export default function PodDetailPage({ params }: { params: Promise<{ contextNam
                         )}
                         {v.type === "Secret" && v.detail && (
                           <Link
-                            href={`/clusters/${encodeURIComponent(ctx)}/config/secrets/${encodeURIComponent((v.detail.secretName as string) || "")}?ns=${encodeURIComponent(namespace)}`}
+                            to={`/clusters/${encodeURIComponent(ctx)}/config/secrets/${encodeURIComponent((v.detail.secretName as string) || "")}?ns=${encodeURIComponent(namespace)}`}
                             className="text-primary hover:underline text-sm"
                           >
                             {v.detail.secretName as string}

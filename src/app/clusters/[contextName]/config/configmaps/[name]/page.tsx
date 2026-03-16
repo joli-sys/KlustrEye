@@ -1,15 +1,13 @@
-"use client";
-
-import { use } from "react";
-import { useSearchParams } from "next/navigation";
+;
+import { useSearchParams, useParams } from "react-router-dom";
 import { ResourceDetail } from "@/components/resource-detail";
 import { useResource } from "@/hooks/use-resources";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
-export default function ConfigMapDetailPage({ params }: { params: Promise<{ contextName: string; name: string }> }) {
-  const { contextName, name } = use(params);
+export default function ConfigMapDetailPage() {
+  const { contextName = "", name = "" } = useParams();
   const ctx = decodeURIComponent(contextName);
-  const searchParams = useSearchParams();
+  const [searchParams] = useSearchParams();
   const namespace = searchParams.get("ns") || "default";
   const { data } = useResource(ctx, "configmaps", name, namespace);
   const cmData = (data?.data as Record<string, string>) || {};

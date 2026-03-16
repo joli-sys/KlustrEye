@@ -1,7 +1,7 @@
-"use client";
 
-import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+
+import { Link } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { cn } from "@/lib/utils";
 import { useUIStore } from "@/lib/stores/ui-store";
 import { useTabStore } from "@/lib/stores/tab-store";
@@ -30,8 +30,8 @@ const iconMap: Record<string, React.ComponentType<{ className?: string }>> = {
 const pagePlugins = getPluginsWithPages();
 
 export function Sidebar({ contextName, onNavigate, forceExpanded }: { contextName: string; onNavigate?: () => void; forceExpanded?: boolean }) {
-  const pathname = usePathname();
-  const router = useRouter();
+  const pathname = useLocation().pathname;
+  const navigate = useNavigate();
   const { sidebarOpen: _sidebarOpen, toggleSidebar, setClusterNamespace } = useUIStore();
   const sidebarOpen = forceExpanded ?? _sidebarOpen;
   const { openTab } = useTabStore();
@@ -47,7 +47,7 @@ export function Sidebar({ contextName, onNavigate, forceExpanded }: { contextNam
     >
       <div className="flex items-center justify-center border-b py-2 px-3 relative">
         {sidebarOpen && (
-          <Link href="/" className="overflow-hidden">
+          <Link to="/" className="overflow-hidden">
             <KlustrEyeLogo size="sm" />
           </Link>
         )}
@@ -76,7 +76,7 @@ export function Sidebar({ contextName, onNavigate, forceExpanded }: { contextNam
               return (
                 <Link
                   key={item.href}
-                  href={href}
+                  to={href}
                   onClick={(e) => {
                     if (e.ctrlKey || e.metaKey || e.button === 1) {
                       e.preventDefault();
@@ -121,7 +121,7 @@ export function Sidebar({ contextName, onNavigate, forceExpanded }: { contextNam
               return (
                 <Link
                   key={plugin.manifest.id}
-                  href={href}
+                  to={href}
                   onClick={(e) => {
                     if (e.ctrlKey || e.metaKey || e.button === 1) {
                       e.preventDefault();
@@ -179,7 +179,7 @@ export function Sidebar({ contextName, onNavigate, forceExpanded }: { contextNam
                   title={tooltip}
                   onClick={() => {
                     if (s.namespace) setClusterNamespace(contextName, s.namespace);
-                    router.push(href);
+                    navigate(href);
                     onNavigate?.();
                   }}
                 >
@@ -213,7 +213,7 @@ export function Sidebar({ contextName, onNavigate, forceExpanded }: { contextNam
 
       <div className="border-t p-2">
         <Link
-          href={`${basePath}/settings`}
+          to={`${basePath}/settings`}
           onClick={() => onNavigate?.()}
           className={cn(
             "flex items-center gap-3 px-3 py-1.5 mx-1 rounded-md text-sm text-muted-foreground hover:bg-accent/50 hover:text-foreground transition-colors",

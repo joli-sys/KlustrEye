@@ -1,6 +1,5 @@
-"use client";
-
-import { use, useState } from "react";
+import { useState } from "react";
+import { useParams } from "react-router-dom";
 import { ResourceListPage } from "@/components/resource-list-page";
 import { ScaleDialog } from "@/components/scale-dialog";
 import { nameColumn, namespaceColumn, ageColumn } from "@/components/resource-table";
@@ -27,8 +26,8 @@ const columns: ColumnDef<Record<string, unknown>>[] = [
   ageColumn(),
 ];
 
-export default function ReplicaSetsPage({ params }: { params: Promise<{ contextName: string }> }) {
-  const { contextName } = use(params);
+export default function ReplicaSetsPage() {
+  const { contextName = "" } = useParams();
   const ctx = decodeURIComponent(contextName);
   const [scaleTarget, setScaleTarget] = useState<{
     name: string;

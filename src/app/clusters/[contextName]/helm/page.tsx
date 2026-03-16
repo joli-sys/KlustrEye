@@ -1,6 +1,4 @@
-"use client";
-
-import { use, useState } from "react";
+import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useClusterNamespace } from "@/hooks/use-cluster-namespace";
 import { ResourceTable } from "@/components/resource-table";
@@ -11,7 +9,7 @@ import { Input } from "@/components/ui/input";
 import { useToast } from "@/components/ui/toast";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import { Plus, Trash2 } from "lucide-react";
-import Link from "next/link";
+import { Link, useParams } from "react-router-dom";
 import type { ColumnDef } from "@tanstack/react-table";
 
 function makeColumns(ctx: string): ColumnDef<Record<string, unknown>>[] {
@@ -25,7 +23,7 @@ function makeColumns(ctx: string): ColumnDef<Record<string, unknown>>[] {
       const ns = row.original.namespace as string;
       return (
         <Link
-          href={`/clusters/${encodeURIComponent(ctx)}/helm/${encodeURIComponent(name)}?namespace=${encodeURIComponent(ns)}`}
+          to={`/clusters/${encodeURIComponent(ctx)}/helm/${encodeURIComponent(name)}?namespace=${encodeURIComponent(ns)}`}
           className="font-medium text-primary hover:underline"
         >
           {name}
@@ -76,8 +74,8 @@ function makeColumns(ctx: string): ColumnDef<Record<string, unknown>>[] {
   ];
 }
 
-export default function HelmPage({ params }: { params: Promise<{ contextName: string }> }) {
-  const { contextName } = use(params);
+export default function HelmPage() {
+  const { contextName = "" } = useParams();
   const ctx = decodeURIComponent(contextName);
   const selectedNamespace = useClusterNamespace(ctx);
   const ns = selectedNamespace === "__all__" ? undefined : selectedNamespace;

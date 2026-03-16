@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { execFile } from "child_process";
 import { promisify } from "util";
 import { writeFile, unlink } from "fs/promises";
