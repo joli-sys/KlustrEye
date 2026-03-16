@@ -1,6 +1,5 @@
-"use client";
-
-import { use, useState } from "react";
+import { useState } from "react";
+import { useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { useClusterNamespace } from "@/hooks/use-cluster-namespace";
 import { ResourceTable, nameColumn, namespaceColumn, ageColumn } from "@/components/resource-table";
@@ -80,8 +79,8 @@ const columns: ColumnDef<Record<string, unknown>>[] = [
   },
 ];
 
-export default function EventsPage({ params }: { params: Promise<{ contextName: string }> }) {
-  const { contextName } = use(params);
+export default function EventsPage() {
+  const { contextName = "" } = useParams();
   const ctx = decodeURIComponent(contextName);
   const selectedNamespace = useClusterNamespace(ctx);
   const ns = selectedNamespace === "__all__" ? undefined : selectedNamespace;

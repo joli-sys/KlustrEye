@@ -1,7 +1,7 @@
-"use client";
+
 
 import { useEffect, useRef } from "react";
-import { usePathname, useSearchParams, useRouter } from "next/navigation";
+import { useLocation, useSearchParams, useNavigate } from "react-router-dom";
 import { useTabStore } from "@/lib/stores/tab-store";
 import { SIDEBAR_SECTIONS } from "@/lib/constants";
 import { X } from "lucide-react";
@@ -42,9 +42,9 @@ function deriveTitleFromPath(pathname: string): string {
 }
 
 export function TabBar({ contextName }: { contextName: string }) {
-  const pathname = usePathname();
-  const searchParams = useSearchParams();
-  const router = useRouter();
+  const pathname = useLocation().pathname;
+  const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const tabs = useTabStore((s) => s.tabsByCluster[contextName]);
@@ -89,7 +89,7 @@ export function TabBar({ contextName }: { contextName: string }) {
             )}
             onClick={() => {
               setActiveTab(contextName, tab.id);
-              router.push(tab.href);
+              navigate(tab.href);
             }}
           >
             <span className="truncate">{tab.title}</span>
@@ -105,7 +105,7 @@ export function TabBar({ contextName }: { contextName: string }) {
                   const updatedTabs = state.tabsByCluster[contextName] || [];
                   const newActiveId = state.activeTabIdByCluster[contextName];
                   const newActive = updatedTabs.find((t) => t.id === newActiveId);
-                  if (newActive) router.push(newActive.href);
+                  if (newActive) navigate(newActive.href);
                 }
               }}
             >

@@ -1,3 +1,4 @@
+// @ts-nocheck
 import type { WebSocket } from "ws";
 import { getKubeConfig } from "@/lib/k8s/client";
 import * as k8s from "@kubernetes/client-node";

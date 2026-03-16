@@ -1,6 +1,4 @@
-"use client";
-
-import { use, useState } from "react";
+import { useState } from "react";
 import { useCRDInstance, useUpdateCRDInstance, useDeleteCRDInstance } from "@/hooks/use-crds";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
@@ -13,24 +11,16 @@ import { useConfirm } from "@/components/ui/confirm-dialog";
 import { formatAge } from "@/lib/utils";
 import { stringify, parse } from "yaml";
 import { Save, Trash2, ArrowLeft } from "lucide-react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useNavigate, useSearchParams, useParams } from "react-router-dom";
 
-type PageParams = Promise<{
-  contextName: string;
-  group: string;
-  version: string;
-  plural: string;
-  name: string;
-}>;
-
-export default function CRDInstanceDetailPage({ params }: { params: PageParams }) {
-  const { contextName, group, version, plural, name } = use(params);
+export default function CRDInstanceDetailPage() {
+  const { contextName = "", group = "", version = "", plural = "", name = "" } = useParams();
   const ctx = decodeURIComponent(contextName);
   const decodedGroup = decodeURIComponent(group);
-  const searchParams = useSearchParams();
+  const [searchParams] = useSearchParams();
   const scope = searchParams.get("scope") || "Namespaced";
   const namespace = searchParams.get("ns") || undefined;
-  const router = useRouter();
+  const navigate = useNavigate();
   const { addToast } = useToast();
   const confirm = useConfirm();
 
@@ -63,7 +53,7 @@ export default function CRDInstanceDetailPage({ params }: { params: PageParams }
     try {
       await deleteMutation.mutateAsync({ name, namespace });
       addToast({ title: "Deleted", description: name, variant: "success" });
-      router.back();
+      navigate(-1);
     } catch (err) {
       addToast({ title: "Delete failed", description: (err as Error).message, variant: "destructive" });
     }
@@ -92,7 +82,7 @@ export default function CRDInstanceDetailPage({ params }: { params: PageParams }
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <Button variant="ghost" size="icon" onClick={() => router.back()}>
+          <Button variant="ghost" size="icon" onClick={() => navigate(-1)}>
             <ArrowLeft className="h-4 w-4" />
           </Button>
           <div>

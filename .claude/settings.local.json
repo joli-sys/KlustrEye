@@ -25,7 +25,22 @@
       "Bash(git commit:*)",
       "Bash(git push:*)",
       "Bash(npm run build:*)",
-      "Bash(transpile\" error in packaged Electron app \\(no tsx at runtime\\)\n- Add Windows PATH augmentation for Node.js/npm directories to fix\n  npm spawn ENOENT when launched from desktop\n- Add kubeconfig settings API endpoint \\(GET/PUT /api/settings/kubeconfig\\)\n  with UserPreference persistence\n- Extend K8s client to support custom kubeconfig path with lazy DB init\n- Add React Query hook for kubeconfig setting management\n- Update home page with kubeconfig path input in empty state and\n  collapsible settings panel when clusters are loaded\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\nEOF\n\\)\")"
+      "Bash(transpile\" error in packaged Electron app \\(no tsx at runtime\\)\n- Add Windows PATH augmentation for Node.js/npm directories to fix\n  npm spawn ENOENT when launched from desktop\n- Add kubeconfig settings API endpoint \\(GET/PUT /api/settings/kubeconfig\\)\n  with UserPreference persistence\n- Extend K8s client to support custom kubeconfig path with lazy DB init\n- Add React Query hook for kubeconfig setting management\n- Update home page with kubeconfig path input in empty state and\n  collapsible settings panel when clusters are loaded\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\nEOF\n\\)\")",
+      "Bash(which cargo && cargo --version && which rustc && rustc --version)",
+      "Bash(curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y)",
+      "Bash(source \"$HOME/.cargo/env\" && cargo --version)",
+      "Bash(source \"$HOME/.cargo/env\" && npm install --save-dev @tauri-apps/cli@latest)",
+      "Bash(source \"$HOME/.cargo/env\" && npx tauri init --app-name \"KlustrEye\" --window-title \"KlustrEye\" --dev-url \"http://localhost:3000\" --before-dev-command \"npm run dev\" --before-build-command \"npm run build\" --ci)",
+      "Bash(cd /Users/jiriolah/operations/personal/KlustrEye && npm uninstall @electron-forge/cli @electron-forge/maker-zip @electron-forge/plugin-auto-unpack-natives @electron-forge/shared-types electron 2>&1)",
+      "Bash(export PATH=\"$HOME/.cargo/bin:$PATH\" && npx tauri build 2>&1)",
+      "Bash(tar -tzf /Users/jiriolah/operations/personal/KlustrEye/dist-server/server-pack.tar.gz 2>&1 | grep \"node_modules\" | wc -l)",
+      "Bash(tar -tzf /Users/jiriolah/operations/personal/KlustrEye/dist-server/server-pack.tar.gz 2>&1 | grep -v \"node_modules\")",
+      "Bash(open /Users/jiriolah/operations/personal/KlustrEye/src-tauri/target/release/bundle/macos/KlustrEye.app)",
+      "Bash(for file:*)",
+      "Bash(do echo:*)",
+      "Read(//Users/jiriolah/operations/personal/KlustrEye/**)",
+      "Bash(done)",
+      "Bash(for f:*)"
     ]
   }
 }

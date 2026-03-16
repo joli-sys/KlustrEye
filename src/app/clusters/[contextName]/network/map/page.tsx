@@ -1,14 +1,8 @@
-"use client";
-
-import { use } from "react";
 import { NetworkMap } from "@/components/network-map/network-map";
+import { useParams } from "react-router-dom";
 
-export default function NetworkMapPage({
-  params,
-}: {
-  params: Promise<{ contextName: string }>;
-}) {
-  const { contextName } = use(params);
+export default function NetworkMapPage() {
+  const { contextName = "" } = useParams();
   const ctx = decodeURIComponent(contextName);
 
   return (

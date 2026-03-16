@@ -1,7 +1,5 @@
-"use client";
+import { lazy, Suspense, useState } from "react";
 
-import { useEffect, useRef, useState } from "react";
-import dynamic from "next/dynamic";
 import { Button } from "@/components/ui/button";
 import { Select } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -14,15 +12,13 @@ interface TerminalPanelProps {
   containers: string[];
 }
 
-// Load xterm dynamically (no SSR)
-const TerminalComponent = dynamic(() => import("./terminal-inner").then((m) => m.TerminalInner), {
-  ssr: false,
-  loading: () => <Skeleton className="h-96 w-full" />,
-});
+const TerminalComponent = lazy(
+  () => import("./terminal-inner").then((m) => ({ default: m.TerminalInner }))
+);
 
 export function TerminalPanel({ contextName, namespace, podName, containers }: TerminalPanelProps) {
   const [container, setContainer] = useState(containers[0] || "");
-  const [key, setKey] = useState(0); // Force remount on reconnect
+  const [key, setKey] = useState(0);
 
   const wsUrl =
     typeof window !== "undefined"
@@ -54,7 +50,11 @@ export function TerminalPanel({ contextName, namespace, podName, containers }: T
         </Button>
       </div>
       <div className="border rounded-md overflow-hidden bg-black">
-        {wsUrl && <TerminalComponent key={key} wsUrl={wsUrl} />}
+        {wsUrl && (
+          <Suspense fallback={<Skeleton className="h-96 w-full" />}>
+            <TerminalComponent key={key} wsUrl={wsUrl} />
+          </Suspense>
+        )}
       </div>
     </div>
   );

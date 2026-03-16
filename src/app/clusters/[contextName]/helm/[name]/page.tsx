@@ -1,8 +1,6 @@
-"use client";
-
-import { use, useState } from "react";
+import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useNavigate, useSearchParams, useParams } from "react-router-dom";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -24,17 +22,13 @@ interface HelmHistory {
   description: string;
 }
 
-export default function HelmReleasePage({
-  params,
-}: {
-  params: Promise<{ contextName: string; name: string }>;
-}) {
-  const { contextName, name } = use(params);
+export default function HelmReleasePage() {
+  const { contextName = "", name = "" } = useParams();
   const ctx = decodeURIComponent(contextName);
   const releaseName = decodeURIComponent(name);
-  const searchParams = useSearchParams();
+  const [searchParams] = useSearchParams();
   const namespace = searchParams.get("namespace") || "default";
-  const router = useRouter();
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { addToast } = useToast();
   const confirm = useConfirm();
@@ -159,7 +153,7 @@ export default function HelmReleasePage({
         <Button
           variant="ghost"
           size="icon"
-          onClick={() => router.push(`/clusters/${encodeURIComponent(ctx)}/helm`)}
+          onClick={() => navigate(`/clusters/${encodeURIComponent(ctx)}/helm`)}
         >
           <ArrowLeft className="h-4 w-4" />
         </Button>

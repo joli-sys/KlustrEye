@@ -1,5 +1,3 @@
-"use client";
-
 import { useQuery, keepPreviousData } from "@tanstack/react-query";
 import type { ResourceKind } from "@/lib/constants";
 

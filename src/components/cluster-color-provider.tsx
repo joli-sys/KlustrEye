@@ -1,4 +1,4 @@
-"use client";
+
 
 import { useClusters } from "@/hooks/use-clusters";
 import { COLOR_PRESETS, DEFAULT_COLOR_SCHEME } from "@/lib/color-presets";

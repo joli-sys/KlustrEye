@@ -1,4 +1,4 @@
-"use client";
+
 
 import { useState, useRef, useEffect } from "react";
 import { usePodLogs } from "@/hooks/use-pod-logs";

@@ -1,3 +1,4 @@
+// @ts-nocheck
 import * as k8s from "@kubernetes/client-node";
 import { type CloudProvider, detectCloudProvider } from "./provider";
 

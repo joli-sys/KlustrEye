@@ -21,6 +21,12 @@
 server.bundle.mjs
 /dist-server/
 
+# vite build output
+/dist/
+
+# rust build output
+/target/
+
 # misc
 .DS_Store
 *.pem

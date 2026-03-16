@@ -1,6 +1,4 @@
-"use client";
-
-import { use, useMemo } from "react";
+import { useMemo } from "react";
 import { ResourceDetail } from "@/components/resource-detail";
 import { useResource, useResources } from "@/hooks/use-resources";
 import { useNodeMetrics } from "@/hooks/use-metrics";
@@ -9,7 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { statusBadge } from "@/components/resource-table";
 import { parseCpuValue, parseMemoryValue, formatBytes, formatCpu, formatAge } from "@/lib/utils";
 import { getPluginsWithResourceExtension } from "@/lib/plugins/registry";
-import Link from "next/link";
+import { Link, useParams } from "react-router-dom";
 
 const nodePlugins = getPluginsWithResourceExtension("nodes");
 
@@ -37,8 +35,8 @@ function ResourceBar({ label, used, total, formatFn }: {
   );
 }
 
-export default function NodeDetailPage({ params }: { params: Promise<{ contextName: string; name: string }> }) {
-  const { contextName, name } = use(params);
+export default function NodeDetailPage() {
+  const { contextName = "", name = "" } = useParams();
   const ctx = decodeURIComponent(contextName);
   const { data } = useResource(ctx, "nodes", name);
   const { data: metricsData } = useNodeMetrics(ctx);
@@ -252,7 +250,7 @@ export default function NodeDetailPage({ params }: { params: Promise<{ contextNa
                         <tr key={`${podNs}/${podName}`} className="border-b hover:bg-muted/30 transition-colors">
                           <td className="px-4 py-2">
                             <Link
-                              href={`/clusters/${encodeURIComponent(ctx)}/workloads/pods/${encodeURIComponent(podName)}?ns=${encodeURIComponent(podNs)}`}
+                              to={`/clusters/${encodeURIComponent(ctx)}/workloads/pods/${encodeURIComponent(podName)}?ns=${encodeURIComponent(podNs)}`}
                               className="text-primary hover:underline font-medium"
                             >
                               {podName}

@@ -1,10 +1,9 @@
-"use client";
-
-import { use } from "react";
+;
 import { ResourceDetail } from "@/components/resource-detail";
+import { useParams } from "react-router-dom";
 
-export default function ClusterRoleDetailPage({ params }: { params: Promise<{ contextName: string; name: string }> }) {
-  const { contextName, name } = use(params);
+export default function ClusterRoleDetailPage() {
+  const { contextName = "", name = "" } = useParams();
   const ctx = decodeURIComponent(contextName);
 
   return <ResourceDetail contextName={ctx} kind="clusterroles" name={name} />;

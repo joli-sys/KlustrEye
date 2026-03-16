@@ -1,4 +1,3 @@
-import Image from "next/image";
 import { cn } from "@/lib/utils";
 
 const sizes = {
@@ -20,7 +19,7 @@ export function KlustrEyeLogo({
 
   return (
     <div className={cn("flex items-center justify-center", className)}>
-      <Image
+      <img
         src="/KlustrEye_logo.png"
         alt="KlustrEye"
         width={width}

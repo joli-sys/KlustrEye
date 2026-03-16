@@ -1,16 +1,14 @@
-"use client";
-
-import { use, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { useState } from "react";
+import { useSearchParams, useParams } from "react-router-dom";
 import { ResourceDetail } from "@/components/resource-detail";
 import { TriggerCronJobDialog } from "@/components/trigger-cronjob-dialog";
 import { Button } from "@/components/ui/button";
 import { Play } from "lucide-react";
 
-export default function CronJobDetailPage({ params }: { params: Promise<{ contextName: string; name: string }> }) {
-  const { contextName, name } = use(params);
+export default function CronJobDetailPage() {
+  const { contextName = "", name = "" } = useParams();
   const ctx = decodeURIComponent(contextName);
-  const searchParams = useSearchParams();
+  const [searchParams] = useSearchParams();
   const namespace = searchParams.get("ns") || "default";
   const [triggerOpen, setTriggerOpen] = useState(false);
 

@@ -1,4 +1,4 @@
-"use client";
+
 
 import { useState, useMemo, useRef, useEffect, useCallback } from "react";
 import {
@@ -12,7 +12,7 @@ import {
   type RowSelectionState,
   type FilterFn,
 } from "@tanstack/react-table";
-import { useSearchParams, usePathname, useRouter } from "next/navigation";
+import { useSearchParams, useLocation, useNavigate } from "react-router-dom";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -23,7 +23,7 @@ import { formatAge, cn } from "@/lib/utils";
 import { useSavedSearches } from "@/lib/stores/saved-searches-store";
 import { useTabStore } from "@/lib/stores/tab-store";
 import { useUIStore } from "@/lib/stores/ui-store";
-import Link from "next/link";
+import { Link } from "react-router-dom";
 
 const globalFilterFn: FilterFn<Record<string, unknown>> = (row, _columnId, filterValue) => {
   const raw = String(filterValue).toLowerCase();
@@ -91,9 +91,9 @@ export function ResourceTable({
   currentNamespace,
   resourceKind,
 }: ResourceTableProps) {
-  const searchParams = useSearchParams();
-  const pathname = usePathname();
-  const router = useRouter();
+  const [searchParams] = useSearchParams();
+  const pathname = useLocation().pathname;
+  const navigate = useNavigate();
   const { openTab } = useTabStore();
   const resourceFilters = useUIStore((s) => s.resourceFilters);
   const setResourceFilter = useUIStore((s) => s.setResourceFilter);
@@ -126,7 +126,7 @@ export function ResourceTable({
       // Restored from store — push filter into URL
       const params = new URLSearchParams(searchParams.toString());
       params.set("filter", globalFilter);
-      router.replace(`${pathname}?${params.toString()}`, { scroll: false });
+      navigate(`${pathname}?${params.toString()}`);
     }
     if (urlFilter && storeKey) {
       // URL has filter — save to store
@@ -144,12 +144,12 @@ export function ResourceTable({
         params.delete("filter");
       }
       const qs = params.toString();
-      router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
+      navigate(qs ? `${pathname}?${qs}` : pathname);
       if (storeKey) {
         setResourceFilter(storeKey, value);
       }
     },
-    [pathname, router, searchParams, storeKey, setResourceFilter]
+    [pathname, navigate, searchParams, storeKey, setResourceFilter]
   );
 
   const savedMatch = useMemo(() => {
@@ -373,7 +373,7 @@ export function ResourceTable({
                   <td key={cell.id} className={cn("px-4 py-2.5", colMeta?.className)}>
                     {cell.column.id === "name" && detailLinkFn ? (
                       <Link
-                        href={detailLinkFn(row.original)}
+                        to={detailLinkFn(row.original)}
                         className="text-primary hover:underline"
                         onClick={(e) => {
                           if (e.ctrlKey || e.metaKey || e.button === 1) {

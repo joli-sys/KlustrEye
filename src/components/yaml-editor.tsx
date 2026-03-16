@@ -1,12 +1,7 @@
-"use client";
-
-import dynamic from "next/dynamic";
+import { lazy, Suspense } from "react";
 import { Skeleton } from "@/components/ui/skeleton";
 
-const MonacoEditor = dynamic(() => import("@monaco-editor/react"), {
-  ssr: false,
-  loading: () => <Skeleton className="h-[500px] w-full" />,
-});
+const MonacoEditor = lazy(() => import("@monaco-editor/react"));
 
 interface YamlEditorProps {
   value: string;
@@ -17,25 +12,27 @@ interface YamlEditorProps {
 
 export function YamlEditor({ value, onChange, readOnly = false, height = "500px" }: YamlEditorProps) {
   return (
-    <MonacoEditor
-      height={height}
-      language="yaml"
-      theme="vs-dark"
-      value={value}
-      onChange={(val) => onChange?.(val || "")}
-      options={{
-        readOnly,
-        minimap: { enabled: false },
-        fontSize: 13,
-        fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
-        scrollBeyondLastLine: false,
-        wordWrap: "on",
-        tabSize: 2,
-        automaticLayout: true,
-        lineNumbers: "on",
-        renderLineHighlight: "line",
-        padding: { top: 8 },
-      }}
-    />
+    <Suspense fallback={<Skeleton style={{ height }} className="w-full" />}>
+      <MonacoEditor
+        height={height}
+        language="yaml"
+        theme="vs-dark"
+        value={value}
+        onChange={(val) => onChange?.(val || "")}
+        options={{
+          readOnly,
+          minimap: { enabled: false },
+          fontSize: 13,
+          fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+          scrollBeyondLastLine: false,
+          wordWrap: "on",
+          tabSize: 2,
+          automaticLayout: true,
+          lineNumbers: "on",
+          renderLineHighlight: "line",
+          padding: { top: 8 },
+        }}
+      />
+    </Suspense>
   );
 }

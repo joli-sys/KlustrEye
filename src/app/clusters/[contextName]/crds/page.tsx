@@ -1,7 +1,6 @@
-"use client";
-
-import { use } from "react";
+;
 import { useCRDs, type CRDDefinition } from "@/hooks/use-crds";
+import { useParams } from "react-router-dom";
 import { ResourceTable, ageColumn } from "@/components/resource-table";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -55,8 +54,8 @@ const columns: ColumnDef<Record<string, unknown>>[] = [
   ageColumn(),
 ];
 
-export default function CRDsPage({ params }: { params: Promise<{ contextName: string }> }) {
-  const { contextName } = use(params);
+export default function CRDsPage() {
+  const { contextName = "" } = useParams();
   const ctx = decodeURIComponent(contextName);
   const { data, isLoading, refetch, isFetching } = useCRDs(ctx);
 

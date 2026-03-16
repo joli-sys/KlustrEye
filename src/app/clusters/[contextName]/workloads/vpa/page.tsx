@@ -1,7 +1,6 @@
-"use client";
-
-import { use } from "react";
+;
 import { useQuery } from "@tanstack/react-query";
+import { useParams } from "react-router-dom";
 import { useClusterNamespace } from "@/hooks/use-cluster-namespace";
 import { ResourceTable, nameColumn, namespaceColumn, ageColumn } from "@/components/resource-table";
 import { Button } from "@/components/ui/button";
@@ -74,8 +73,8 @@ const columns: ColumnDef<Record<string, unknown>>[] = [
   ageColumn(),
 ];
 
-export default function VPAPage({ params }: { params: Promise<{ contextName: string }> }) {
-  const { contextName } = use(params);
+export default function VPAPage() {
+  const { contextName = "" } = useParams();
   const ctx = decodeURIComponent(contextName);
   const selectedNamespace = useClusterNamespace(ctx);
   const ns = selectedNamespace === "__all__" ? undefined : selectedNamespace;

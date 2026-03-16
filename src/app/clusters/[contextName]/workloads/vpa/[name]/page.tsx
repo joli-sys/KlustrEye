@@ -1,14 +1,12 @@
-"use client";
-
-import { use } from "react";
-import { useSearchParams } from "next/navigation";
+;
+import { useSearchParams, useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { ArrowLeft } from "lucide-react";
-import { useRouter } from "next/navigation";
+import { useNavigate } from "react-router-dom";
 import { formatAge } from "@/lib/utils";
 
 function useVPA(contextName: string, name: string, namespace: string) {
@@ -25,12 +23,12 @@ function useVPA(contextName: string, name: string, namespace: string) {
   });
 }
 
-export default function VPADetailPage({ params }: { params: Promise<{ contextName: string; name: string }> }) {
-  const { contextName, name } = use(params);
+export default function VPADetailPage() {
+  const { contextName = "", name = "" } = useParams();
   const ctx = decodeURIComponent(contextName);
-  const searchParams = useSearchParams();
+  const [searchParams] = useSearchParams();
   const namespace = searchParams.get("ns") || "default";
-  const router = useRouter();
+  const navigate = useNavigate();
 
   const { data, isLoading } = useVPA(ctx, name, namespace);
 
@@ -61,7 +59,7 @@ export default function VPADetailPage({ params }: { params: Promise<{ contextNam
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-3">
-        <Button variant="ghost" size="icon" onClick={() => router.back()}>
+        <Button variant="ghost" size="icon" onClick={() => navigate(-1)}>
           <ArrowLeft className="h-4 w-4" />
         </Button>
         <div>

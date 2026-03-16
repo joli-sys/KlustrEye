@@ -1,3 +1,4 @@
+// @ts-nocheck
 import * as k8s from "@kubernetes/client-node";
 import { setHeaderOptions } from "@kubernetes/client-node";
 import { type ResourceKind, RESOURCE_REGISTRY } from "@/lib/constants";

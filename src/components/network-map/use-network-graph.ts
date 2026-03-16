@@ -1,5 +1,3 @@
-"use client";
-
 import { useMemo } from "react";
 import type { Node, Edge } from "@xyflow/react";
 import { useQuery } from "@tanstack/react-query";

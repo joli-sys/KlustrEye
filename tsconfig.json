@@ -1,11 +1,7 @@
 {
   "compilerOptions": {
     "target": "ES2017",
-    "lib": [
-      "dom",
-      "dom.iterable",
-      "esnext"
-    ],
+    "lib": ["dom", "dom.iterable", "esnext"],
     "allowJs": true,
     "skipLibCheck": true,
     "strict": true,
@@ -16,27 +12,26 @@
     "resolveJsonModule": true,
     "isolatedModules": true,
     "jsx": "react-jsx",
-    "incremental": true,
-    "plugins": [
-      {
-        "name": "next"
-      }
-    ],
     "paths": {
-      "@/*": [
-        "./src/*"
-      ]
+      "@/*": ["./src/*"]
     }
   },
-  "include": [
-    "next-env.d.ts",
-    "**/*.ts",
-    "**/*.tsx",
-    ".next/types/**/*.ts",
-    ".next/dev/types/**/*.ts"
-  ],
+  "include": ["src", "vite.config.ts", "index.html"],
   "exclude": [
     "node_modules",
-    "out"
+    "out",
+    "dist",
+    "src-tauri",
+    "backend",
+    "target",
+    "src/lib/prisma.ts",
+    "src/lib/k8s/client.ts",
+    "src/lib/k8s/resources.ts",
+    "src/lib/k8s/port-forward.ts",
+    "src/lib/k8s/helm.ts",
+    "src/lib/ws/shell-handler.ts",
+    "src/lib/ws/terminal-handler.ts",
+    "server.ts",
+    "src/plugins/grafana/server.ts"
   ]
 }

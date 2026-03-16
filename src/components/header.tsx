@@ -1,4 +1,4 @@
-"use client";
+
 
 import { NamespaceSelector } from "@/components/namespace-selector";
 import { PortForwardIndicator } from "@/components/port-forward-indicator";

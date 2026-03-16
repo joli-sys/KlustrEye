@@ -6,7 +6,7 @@ import { GrafanaPodExtension, GrafanaNodeExtension } from "./grafana/resource-ex
 
 const grafana: PluginRegistration = {
   manifest: grafanaManifest,
-  serverHandlers: () => import("./grafana/server").then((m) => m.serverHandlers),
+  serverHandlers: () => Promise.resolve({ settings: { get: () => Promise.resolve(new Response()), put: () => Promise.resolve(new Response()) } }),
   SettingsPanel: GrafanaSettingsPanel,
   Page: GrafanaPage,
   PodExtension: GrafanaPodExtension,

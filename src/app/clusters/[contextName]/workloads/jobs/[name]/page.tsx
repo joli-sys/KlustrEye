@@ -1,13 +1,11 @@
-"use client";
-
-import { use } from "react";
-import { useSearchParams } from "next/navigation";
+;
+import { useSearchParams, useParams } from "react-router-dom";
 import { ResourceDetail } from "@/components/resource-detail";
 
-export default function JobDetailPage({ params }: { params: Promise<{ contextName: string; name: string }> }) {
-  const { contextName, name } = use(params);
+export default function JobDetailPage() {
+  const { contextName = "", name = "" } = useParams();
   const ctx = decodeURIComponent(contextName);
-  const searchParams = useSearchParams();
+  const [searchParams] = useSearchParams();
   const namespace = searchParams.get("ns") || "default";
 
   return <ResourceDetail contextName={ctx} kind="jobs" name={name} namespace={namespace} />;

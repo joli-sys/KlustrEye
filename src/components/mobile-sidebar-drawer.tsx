@@ -1,4 +1,4 @@
-"use client";
+
 
 import { useUIStore } from "@/lib/stores/ui-store";
 import { Sidebar } from "@/components/sidebar";

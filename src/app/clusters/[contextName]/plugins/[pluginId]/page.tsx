@@ -1,14 +1,8 @@
-"use client";
-
-import { use } from "react";
 import { getPlugin } from "@/lib/plugins/registry";
+import { useParams } from "react-router-dom";
 
-export default function PluginPage({
-  params,
-}: {
-  params: Promise<{ contextName: string; pluginId: string }>;
-}) {
-  const { contextName, pluginId } = use(params);
+export default function PluginPage() {
+  const { contextName = "", pluginId = "" } = useParams();
   const ctx = decodeURIComponent(contextName);
   const plugin = getPlugin(pluginId);
 

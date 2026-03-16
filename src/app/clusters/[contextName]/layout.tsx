@@ -1,3 +1,4 @@
+import { useParams, Outlet } from "react-router-dom";
 import { Sidebar } from "@/components/sidebar";
 import { Header } from "@/components/header";
 import { TabBar } from "@/components/tab-bar";
@@ -5,29 +6,23 @@ import { ClusterColorProvider } from "@/components/cluster-color-provider";
 import { MobileSidebarDrawer } from "@/components/mobile-sidebar-drawer";
 import { ClusterShellTerminal } from "@/components/cluster-shell-terminal";
 
-export default async function ClusterLayout({
-  children,
-  params,
-}: {
-  children: React.ReactNode;
-  params: Promise<{ contextName: string }>;
-}) {
-  const { contextName } = await params;
+export default function ClusterLayout() {
+  const { contextName = "" } = useParams();
   const decodedContext = decodeURIComponent(contextName);
 
   return (
     <ClusterColorProvider contextName={decodedContext}>
       <div className="flex flex-1 overflow-hidden">
-        {/* Desktop sidebar — always visible on md+ */}
         <div className="hidden md:flex">
           <Sidebar contextName={decodedContext} />
         </div>
-        {/* Mobile sidebar drawer */}
         <MobileSidebarDrawer contextName={decodedContext} />
         <div className="flex flex-col flex-1 overflow-hidden">
           <Header contextName={decodedContext} />
           <TabBar contextName={decodedContext} />
-          <main className="flex-1 overflow-auto p-4">{children}</main>
+          <main className="flex-1 overflow-auto p-4">
+            <Outlet />
+          </main>
           <ClusterShellTerminal contextName={decodedContext} />
         </div>
       </div>

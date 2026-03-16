@@ -1,6 +1,4 @@
-"use client";
-
-import { use, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useResources, useDeleteResource } from "@/hooks/use-resources";
 import { usePodMetrics } from "@/hooks/use-metrics";
 import { useClusterNamespace } from "@/hooks/use-cluster-namespace";
@@ -9,12 +7,12 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { CreateResourceDialog } from "@/components/create-resource-dialog";
 import { parseCpuValue, parseMemoryValue, formatBytes, formatCpu } from "@/lib/utils";
-import { useRouter } from "next/navigation";
+import { useNavigate, useParams } from "react-router-dom";
 import type { ColumnDef } from "@tanstack/react-table";
 import { useToast } from "@/components/ui/toast";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import { Plus, RefreshCw } from "lucide-react";
-import Link from "next/link";
+import { Link } from "react-router-dom";
 
 function UsageBar({ pct, used, total, req }: { pct: number; used: string; total: string; req?: string }) {
   return (
@@ -36,10 +34,10 @@ function UsageBar({ pct, used, total, req }: { pct: number; used: string; total:
   );
 }
 
-export default function PodsPage({ params }: { params: Promise<{ contextName: string }> }) {
-  const { contextName } = use(params);
+export default function PodsPage() {
+  const { contextName = "" } = useParams();
   const ctx = decodeURIComponent(contextName);
-  const router = useRouter();
+  const navigate = useNavigate();
   const selectedNamespace = useClusterNamespace(ctx);
   const ns = selectedNamespace === "__all__" ? undefined : selectedNamespace;
   const { data, isLoading, refetch, isFetching } = useResources(ctx, "pods", ns);
@@ -187,7 +185,7 @@ export default function PodsPage({ params }: { params: Promise<{ contextName: st
         if (!nodeName) return <span className="text-muted-foreground">-</span>;
         return (
           <Link
-            href={`/clusters/${encodeURIComponent(ctx)}/nodes/${encodeURIComponent(nodeName)}`}
+            to={`/clusters/${encodeURIComponent(ctx)}/nodes/${encodeURIComponent(nodeName)}`}
             className="text-primary hover:underline"
           >
             {nodeName}
@@ -270,15 +268,15 @@ export default function PodsPage({ params }: { params: Promise<{ contextName: st
         onBatchDelete={handleBatchDelete}
         onLogs={(item) => {
           const metadata = item.metadata as Record<string, unknown>;
-          router.push(`/clusters/${encodeURIComponent(ctx)}/workloads/pods/${metadata.name}?tab=logs&ns=${metadata.namespace}`);
+          navigate(`/clusters/${encodeURIComponent(ctx)}/workloads/pods/${metadata.name}?tab=logs&ns=${metadata.namespace}`);
         }}
         onTerminal={(item) => {
           const metadata = item.metadata as Record<string, unknown>;
-          router.push(`/clusters/${encodeURIComponent(ctx)}/workloads/pods/${metadata.name}?tab=terminal&ns=${metadata.namespace}`);
+          navigate(`/clusters/${encodeURIComponent(ctx)}/workloads/pods/${metadata.name}?tab=terminal&ns=${metadata.namespace}`);
         }}
         onEdit={(item) => {
           const metadata = item.metadata as Record<string, unknown>;
-          router.push(`/clusters/${encodeURIComponent(ctx)}/workloads/pods/${metadata.name}?tab=yaml&ns=${metadata.namespace}`);
+          navigate(`/clusters/${encodeURIComponent(ctx)}/workloads/pods/${metadata.name}?tab=yaml&ns=${metadata.namespace}`);
         }}
         detailLinkFn={(item) => {
           const metadata = item.metadata as Record<string, unknown>;

@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+
 import type { ComponentType } from "react";
 
 export interface PluginManifest {
@@ -16,22 +16,11 @@ export interface PluginManifest {
 
 export interface PluginServerHandlers {
   settings: {
-    get: (
-      contextName: string
-    ) => Promise<NextResponse>;
-    put: (
-      contextName: string,
-      request: NextRequest
-    ) => Promise<NextResponse>;
-    test?: (
-      contextName: string
-    ) => Promise<NextResponse>;
+    get: (contextName: string) => Promise<Response>;
+    put: (contextName: string, request: Request) => Promise<Response>;
+    test?: (contextName: string) => Promise<Response>;
   };
-  api?: (
-    contextName: string,
-    path: string[],
-    request: NextRequest
-  ) => Promise<NextResponse>;
+  api?: (contextName: string, path: string[], request: Request) => Promise<Response>;
 }
 
 export interface PluginResourceExtensionProps {

@@ -1,6 +1,5 @@
-"use client";
-
-import { use, useState } from "react";
+import { useState } from "react";
+import { useParams } from "react-router-dom";
 import { ResourceListPage } from "@/components/resource-list-page";
 import { CreateResourceDialog } from "@/components/create-resource-dialog";
 import { nameColumn, namespaceColumn, ageColumn } from "@/components/resource-table";
@@ -20,8 +19,8 @@ const columns: ColumnDef<Record<string, unknown>>[] = [
   ageColumn(),
 ];
 
-export default function ConfigMapsPage({ params }: { params: Promise<{ contextName: string }> }) {
-  const { contextName } = use(params);
+export default function ConfigMapsPage() {
+  const { contextName = "" } = useParams();
   const ctx = decodeURIComponent(contextName);
   const [createOpen, setCreateOpen] = useState(false);
 

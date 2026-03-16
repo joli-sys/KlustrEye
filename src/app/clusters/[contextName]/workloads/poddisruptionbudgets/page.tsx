@@ -1,7 +1,6 @@
-"use client";
-
-import { use } from "react";
+;
 import { ResourceListPage } from "@/components/resource-list-page";
+import { useParams } from "react-router-dom";
 import { nameColumn, namespaceColumn, ageColumn } from "@/components/resource-table";
 import type { ColumnDef } from "@tanstack/react-table";
 
@@ -51,8 +50,8 @@ const columns: ColumnDef<Record<string, unknown>>[] = [
   ageColumn(),
 ];
 
-export default function PodDisruptionBudgetsPage({ params }: { params: Promise<{ contextName: string }> }) {
-  const { contextName } = use(params);
+export default function PodDisruptionBudgetsPage() {
+  const { contextName = "" } = useParams();
   const ctx = decodeURIComponent(contextName);
 
   return (

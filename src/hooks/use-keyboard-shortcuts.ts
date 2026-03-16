@@ -1,5 +1,3 @@
-"use client";
-
 import { useEffect } from "react";
 import { useUIStore } from "@/lib/stores/ui-store";
 

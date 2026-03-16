@@ -1,30 +1,11 @@
-use std::fs;
 use std::net::TcpListener;
-use std::path::PathBuf;
-use std::process::{Child, Command, Stdio};
-use std::sync::Mutex;
 use tauri::Manager;
-
-struct ServerState {
-    child: Mutex<Option<Child>>,
-}
-
-impl Drop for ServerState {
-    fn drop(&mut self) {
-        if let Ok(mut guard) = self.child.lock() {
-            if let Some(mut c) = guard.take() {
-                let _ = c.kill();
-            }
-        }
-    }
-}
 
 fn find_available_port(preferred: u16) -> u16 {
     if TcpListener::bind(("127.0.0.1", preferred)).is_ok() {
         return preferred;
     }
-    let listener =
-        TcpListener::bind(("127.0.0.1", 0)).expect("Failed to find available port");
+    let listener = TcpListener::bind(("127.0.0.1", 0)).expect("Failed to find available port");
     listener.local_addr().unwrap().port()
 }
 
@@ -57,65 +38,49 @@ fn fix_path() {
     }
 }
 
-/// Extract the server pack tarball to the app data directory if not already done
-/// for this version.
-fn ensure_server_extracted(resource_dir: &PathBuf, app_data: &PathBuf) -> PathBuf {
-    let server_dir = app_data.join("server");
-    let version_marker = server_dir.join(".version");
-    let current_version = env!("CARGO_PKG_VERSION");
+fn get_database_url(app: &tauri::App) -> String {
+    let db_dir = if cfg!(target_os = "macos") {
+        dirs::home_dir()
+            .expect("Failed to resolve home dir")
+            .join("Library/Application Support/KlustrEye")
+    } else {
+        dirs::config_dir()
+            .expect("Failed to resolve config dir")
+            .join("KlustrEye")
+    };
+    std::fs::create_dir_all(&db_dir).ok();
+    let db_path = db_dir.join("klustreye.db");
+    format!("file:{}", db_path.to_string_lossy().replace('\\', "/"))
+}
 
-    // Check if already extracted for this version
-    if version_marker.exists() {
-        if let Ok(v) = fs::read_to_string(&version_marker) {
-            if v.trim() == current_version {
-                return server_dir;
+fn clear_webview_cache(app: &tauri::App) {
+    if let Some(cache_dir) = dirs::cache_dir() {
+        for name in &["com.klustreye.desktop", "klustreye", "com.klustreye.app"] {
+            let p = cache_dir.join(name);
+            if p.exists() {
+                let _ = std::fs::remove_dir_all(&p);
             }
         }
     }
-
-    // Clean and extract
-    let _ = fs::remove_dir_all(&server_dir);
-    fs::create_dir_all(&server_dir).expect("Failed to create server directory");
-
-    let tarball = resource_dir.join("server-pack.tar.gz");
-    let file = fs::File::open(&tarball).unwrap_or_else(|e| {
-        panic!(
-            "Failed to open server pack at {}: {}",
-            tarball.display(),
-            e
-        )
-    });
-
-    let decoder = flate2::read::GzDecoder::new(file);
-    let mut archive = tar::Archive::new(decoder);
-
-    // On Windows: don't try to set Unix permissions (unsupported) and use
-    // long path prefix (\\?\) to handle node_modules paths > 260 chars.
-    archive.set_preserve_permissions(false);
-    archive.set_preserve_mtime(false);
-
-    if cfg!(windows) {
-        // Use \\?\ prefix on the target dir to enable long paths
-        let long_server_dir = PathBuf::from(format!(
-            "\\\\?\\{}",
-            server_dir
-                .canonicalize()
-                .unwrap_or_else(|_| server_dir.clone())
-                .display()
-        ));
-        archive
-            .unpack(&long_server_dir)
-            .expect("Failed to extract server pack");
-    } else {
-        archive
-            .unpack(&server_dir)
-            .expect("Failed to extract server pack");
+    if cfg!(target_os = "macos") {
+        if let Some(home) = dirs::home_dir() {
+            let webkit_dir = home.join("Library/WebKit");
+            for name in &["com.klustreye.desktop", "klustreye", "com.klustreye.app"] {
+                let p = webkit_dir.join(name);
+                if p.exists() {
+                    let _ = std::fs::remove_dir_all(&p);
+                }
+            }
+        }
     }
-
-    // Write version marker
-    fs::write(&version_marker, current_version).ok();
-
-    server_dir
+    if cfg!(windows) {
+        if let Ok(app_data) = app.path().app_data_dir() {
+            let webview_data = app_data.join("EBWebView");
+            if webview_data.exists() {
+                let _ = std::fs::remove_dir_all(&webview_data);
+            }
+        }
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -130,97 +95,26 @@ pub fn run() {
                         .level(log::LevelFilter::Info)
                         .build(),
                 )?;
-                // In dev mode, beforeDevCommand starts the server — nothing to do.
+                // In dev: frontend + backend already started by beforeDevCommand
                 return Ok(());
             }
 
             let port = find_available_port(3000);
+            let database_url = get_database_url(app);
 
-            let resource_dir = app
-                .path()
-                .resource_dir()
-                .expect("Failed to resolve resource dir");
+            eprintln!("[tauri] Starting embedded Axum server on port {port}");
+            eprintln!("[tauri] Database: {database_url}");
 
-            let app_data = app
-                .path()
-                .app_data_dir()
-                .expect("Failed to resolve app data dir");
-            fs::create_dir_all(&app_data).ok();
-
-            // Extract server files
-            let server_dir = ensure_server_extracted(&resource_dir, &app_data);
-
-            // Use the same DB location as the Electron app for migration compatibility
-            let db_dir = if cfg!(target_os = "macos") {
-                dirs::home_dir()
-                    .expect("Failed to resolve home dir")
-                    .join("Library/Application Support/KlustrEye")
-            } else {
-                // Windows: %APPDATA%/KlustrEye, Linux: ~/.config/KlustrEye
-                dirs::config_dir()
-                    .expect("Failed to resolve config dir")
-                    .join("KlustrEye")
-            };
-            fs::create_dir_all(&db_dir).ok();
-            let db_url = format!("file:{}/klustreye.db", db_dir.display());
-
-            let server_bundle = server_dir.join("server.bundle.mjs");
-
-            // Use the bundled Node.js binary (fully standalone, no system Node.js needed)
-            let node_bin = if cfg!(windows) {
-                server_dir.join("node-bin").join("node.exe")
-            } else {
-                server_dir.join("node-bin").join("node")
-            };
-            let node_cmd = if node_bin.exists() {
-                node_bin.to_string_lossy().to_string()
-            } else {
-                // Fallback to system node for dev/testing
-                "node".to_string()
-            };
-
-            eprintln!("[tauri] Starting server on port {}", port);
-            eprintln!("[tauri] Node binary: {}", node_cmd);
-            eprintln!("[tauri] Server dir: {}", server_dir.display());
-
-            let child = Command::new(&node_cmd)
-                .arg(&server_bundle)
-                .env("NODE_ENV", "production")
-                .env("PORT", port.to_string())
-                .env("DATABASE_URL", &db_url)
-                .env("NEXT_TELEMETRY_DISABLED", "1")
-                .current_dir(&server_dir)
-                .stdout(Stdio::inherit())
-                .stderr(Stdio::inherit())
-                .spawn()
-                .expect("Failed to start Node.js server — is Node.js installed?");
-
-            app.manage(ServerState {
-                child: Mutex::new(Some(child)),
+            // Start the embedded Rust/Axum server
+            let db_url = database_url.clone();
+            tauri::async_runtime::spawn(async move {
+                if let Err(e) = backend::start_server(port, &db_url).await {
+                    eprintln!("[tauri] Server error: {e}");
+                }
             });
 
-            // Clear WebKit cache to prevent stale JS chunks after app updates.
-            // WKWebView persists HTTP cache across launches, causing old chunk
-            // hashes to be served after rebuilds.
-            if let Some(cache_dir) = dirs::cache_dir() {
-                for name in &["com.klustreye.desktop", "klustreye", "com.klustreye.app"] {
-                    let p = cache_dir.join(name);
-                    if p.exists() {
-                        let _ = fs::remove_dir_all(&p);
-                    }
-                }
-            }
-            if let Some(home) = dirs::home_dir() {
-                let webkit_dir = home.join("Library/WebKit");
-                for name in &["com.klustreye.desktop", "klustreye", "com.klustreye.app"] {
-                    let p = webkit_dir.join(name);
-                    if p.exists() {
-                        let _ = fs::remove_dir_all(&p);
-                    }
-                }
-            }
+            clear_webview_cache(app);
 
-            // Wait for server then navigate the window
             let window = app
                 .get_webview_window("main")
                 .expect("Failed to get main window");
@@ -228,11 +122,13 @@ pub fn run() {
             window.clear_all_browsing_data().ok();
 
             std::thread::spawn(move || {
-                if wait_for_server(port, 30000) {
-                    let url: tauri::Url = format!("http://localhost:{}", port)
+                if wait_for_server(port, 15000) {
+                    let url: tauri::Url = format!("http://localhost:{port}")
                         .parse()
                         .unwrap();
                     let _ = window.navigate(url);
+                } else {
+                    eprintln!("[tauri] Server did not start within 15 seconds");
                 }
             });
 
