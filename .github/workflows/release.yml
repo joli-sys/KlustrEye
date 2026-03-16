@@ -1,0 +1,68 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  macos-arm64:
+    uses: ./.github/workflows/rc-build-platform.yml
+    with:
+      platform: macos-arm64
+      runner: macos-latest
+      rust-target: aarch64-apple-darwin
+      node-platform: darwin
+      node-arch: arm64
+
+  macos-x64:
+    uses: ./.github/workflows/rc-build-platform.yml
+    with:
+      platform: macos-x64
+      runner: macos-latest
+      rust-target: x86_64-apple-darwin
+      node-platform: darwin
+      node-arch: x64
+
+  windows-x64:
+    uses: ./.github/workflows/rc-build-platform.yml
+    with:
+      platform: windows-x64
+      runner: windows-latest
+      rust-target: x86_64-pc-windows-msvc
+      node-platform: win32
+      node-arch: x64
+
+  linux-x64:
+    uses: ./.github/workflows/rc-build-platform.yml
+    with:
+      platform: linux-x64
+      runner: ubuntu-22.04
+      rust-target: x86_64-unknown-linux-gnu
+      node-platform: linux
+      node-arch: x64
+
+  publish:
+    needs: [macos-arm64, macos-x64, windows-x64, linux-x64]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Get version
+        id: version
+        run: echo "version=$(node -p 'require("./package.json").version')" >> "$GITHUB_OUTPUT"
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: KlustrEye v${{ steps.version.outputs.version }}
+          generate_release_notes: true
+          files: artifacts/**/*
