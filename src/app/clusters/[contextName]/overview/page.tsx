@@ -20,7 +20,40 @@ const SINGULAR_TO_PLURAL: Record<string, string> = {
   Node: "nodes", Namespace: "namespaces",
 };
 
-function ClusterResourceBar({ label, icon: Icon, used, total, formatFn, color }: {
+function GaugeChart({ pct }: { pct: number }) {
+  const r = 54;
+  const cx = 64;
+  const cy = 64;
+  const startAngle = -210;
+  const endAngle = 30;
+  const totalAngle = endAngle - startAngle; // 240°
+
+  const toRad = (deg: number) => (deg * Math.PI) / 180;
+  const arcX = (deg: number) => cx + r * Math.cos(toRad(deg));
+  const arcY = (deg: number) => cy + r * Math.sin(toRad(deg));
+
+  const fillAngle = startAngle + (totalAngle * Math.min(pct, 100)) / 100;
+  const color = pct > 80 ? "#ef4444" : pct > 60 ? "#eab308" : "#22c55e";
+
+  const bgPath = `M ${arcX(startAngle)} ${arcY(startAngle)} A ${r} ${r} 0 1 1 ${arcX(endAngle)} ${arcY(endAngle)}`;
+  const fgPath = pct <= 0
+    ? ""
+    : `M ${arcX(startAngle)} ${arcY(startAngle)} A ${r} ${r} 0 ${fillAngle - startAngle > 180 ? 1 : 0} 1 ${arcX(fillAngle)} ${arcY(fillAngle)}`;
+
+  return (
+    <svg viewBox="0 0 128 80" className="w-full max-w-[180px]">
+      <path d={bgPath} fill="none" stroke="currentColor" strokeWidth="10" strokeLinecap="round" className="text-muted" />
+      {fgPath && (
+        <path d={fgPath} fill="none" stroke={color} strokeWidth="10" strokeLinecap="round" />
+      )}
+      <text x="64" y="62" textAnchor="middle" dominantBaseline="middle" className="fill-foreground" fontSize="18" fontWeight="bold">
+        {pct.toFixed(1)}%
+      </text>
+    </svg>
+  );
+}
+
+function GaugeCard({ label, icon: Icon, used, total, formatFn, color }: {
   label: string;
   icon: React.ComponentType<{ className?: string }>;
   used: number;
@@ -35,15 +68,9 @@ function ClusterResourceBar({ label, icon: Icon, used, total, formatFn, color }:
         <CardTitle className="text-sm font-medium text-muted-foreground">{label}</CardTitle>
         <Icon className={`h-4 w-4 ${color}`} />
       </CardHeader>
-      <CardContent>
-        <div className="text-2xl font-bold">{pct.toFixed(1)}%</div>
-        <div className="h-3 rounded-full bg-muted overflow-hidden mt-2">
-          <div
-            className={`h-full rounded-full transition-all ${pct > 80 ? "bg-red-500" : pct > 60 ? "bg-yellow-500" : "bg-green-500"}`}
-            style={{ width: `${Math.min(pct, 100)}%` }}
-          />
-        </div>
-        <p className="text-xs text-muted-foreground mt-1">
+      <CardContent className="flex flex-col items-center gap-1">
+        <GaugeChart pct={pct} />
+        <p className="text-xs text-muted-foreground">
           {formatFn(used)} / {formatFn(total)}
         </p>
       </CardContent>
@@ -178,7 +205,7 @@ export default function OverviewPage() {
 
       {clusterResources && (
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <ClusterResourceBar
+          <GaugeCard
             label="Cluster CPU"
             icon={Cpu}
             used={clusterResources.cpuUsed}
@@ -186,7 +213,7 @@ export default function OverviewPage() {
             formatFn={formatCpu}
             color="text-blue-400"
           />
-          <ClusterResourceBar
+          <GaugeCard
             label="Cluster Memory"
             icon={MemoryStick}
             used={clusterResources.memUsed}
