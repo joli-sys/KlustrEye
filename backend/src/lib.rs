@@ -29,8 +29,16 @@ async fn serve_asset(path: &str) -> Response {
     match Assets::get(path) {
         Some(content) => {
             let mime = mime_guess::from_path(path).first_or_octet_stream();
+            // Vite hashes JS/CSS filenames — cache them long-term.
+            // HTML and other entry points must never be cached so updates are picked up.
+            let cache_control = if path.ends_with(".html") {
+                "no-store, no-cache, must-revalidate"
+            } else {
+                "public, max-age=31536000, immutable"
+            };
             Response::builder()
                 .header(header::CONTENT_TYPE, mime.as_ref())
+                .header(header::CACHE_CONTROL, cache_control)
                 .body(Body::from(content.data))
                 .unwrap()
         }
@@ -39,6 +47,7 @@ async fn serve_asset(path: &str) -> Response {
             match Assets::get("index.html") {
                 Some(content) => Response::builder()
                     .header(header::CONTENT_TYPE, "text/html")
+                    .header(header::CACHE_CONTROL, "no-store, no-cache, must-revalidate")
                     .body(Body::from(content.data))
                     .unwrap(),
                 None => Response::builder()
