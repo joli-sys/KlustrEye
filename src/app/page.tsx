@@ -11,13 +11,15 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { COLOR_PRESETS, DEFAULT_COLOR_SCHEME } from "@/lib/color-presets";
-import { Server, AlertCircle, Pencil, Network, User, Box, FolderOpen, Settings, ChevronDown, ChevronRight, Loader2, Search } from "lucide-react";
+import { Server, AlertCircle, Pencil, Network, User, Box, FolderOpen, Settings, ChevronDown, ChevronRight, Loader2, Search, Sun, Moon } from "lucide-react";
 import { CloudProviderIcon } from "@/components/cloud-provider-icon";
 import { Link } from "react-router-dom";
 import type { ClusterContext } from "@/hooks/use-clusters";
+import { useTheme } from "@/hooks/use-theme";
 
 export default function HomePage() {
   const { data: clusters, isLoading, error } = useClusters();
+  const { theme, toggle: toggleTheme } = useTheme();
   const { data: orgs } = useOrganizations();
   const [renameCtx, setRenameCtx] = useState<{
     name: string;
@@ -155,10 +157,19 @@ export default function HomePage() {
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
-      <header className="drag-region flex items-center justify-center pl-4 md:pl-20 px-8 py-3 border-b bg-card">
+      <header className="drag-region flex items-center justify-between pl-4 md:pl-20 px-8 py-3 border-b bg-card">
         <div className="no-drag-region">
           <KlustrEyeLogo size="sm" />
         </div>
+        <Button
+          variant="outline"
+          size="icon"
+          className="no-drag-region h-8 w-8 text-muted-foreground"
+          onClick={toggleTheme}
+          title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+        >
+          {theme === "dark" ? <Sun className="h-3.5 w-3.5" /> : <Moon className="h-3.5 w-3.5" />}
+        </Button>
       </header>
 
       <div className="max-w-5xl mx-auto p-4 md:p-8 flex-1">
