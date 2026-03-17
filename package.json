@@ -1,6 +1,6 @@
 {
   "name": "klustreye",
-  "version": "0.1.3",
+  "version": "0.2.1-rc.1",
   "description": "KlustrEye — a web-based Kubernetes IDE",
   "scripts": {
     "dev": "concurrently \"cargo run --bin klustreye-server\" \"vite --port 3001\"",
