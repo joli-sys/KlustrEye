@@ -2,6 +2,7 @@ pub mod clusters;
 pub mod helm;
 pub mod logs;
 pub mod metrics;
+pub mod opencost;
 pub mod organizations;
 pub mod port_forward;
 pub mod resources;
@@ -77,6 +78,15 @@ pub fn build_router(state: AppState) -> Router {
             .put(organizations::update_organization)
             .delete(organizations::delete_organization)
         )
+        // OpenCost plugin
+        .route("/api/clusters/:ctx/plugins/opencost/settings",
+            get(opencost::get_settings)
+            .put(opencost::put_settings)
+            .post(opencost::test_connection))
+        .route("/api/clusters/:ctx/plugins/opencost/allocation",
+            get(opencost::get_allocation))
+        .route("/api/clusters/:ctx/plugins/opencost/assets",
+            get(opencost::get_assets))
         // Settings
         .route("/api/settings/kubeconfig",
             get(settings::get_kubeconfig).put(settings::set_kubeconfig))
