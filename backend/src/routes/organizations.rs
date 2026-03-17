@@ -9,13 +9,19 @@ use uuid::Uuid;
 use crate::{error::{AppError, Result}, AppState};
 
 pub async fn list_organizations(State(state): State<AppState>) -> Result<Json<Value>> {
-    let rows: Vec<OrgRow> = sqlx::query_as(
-        "SELECT id, name, sort_order, created_at, updated_at FROM organizations ORDER BY sort_order, name",
+    let rows: Vec<OrgRowWithCount> = sqlx::query_as(
+        "SELECT o.id, o.name, o.sort_order, o.created_at, o.updated_at,
+                COUNT(c.id) as cluster_count
+         FROM organizations o
+         LEFT JOIN cluster_contexts c ON c.organization_id = o.id
+         GROUP BY o.id
+         ORDER BY o.sort_order, o.name",
     )
     .fetch_all(&state.db)
     .await?;
 
-    Ok(Json(serde_json::to_value(rows)?))
+    let json: Vec<Value> = rows.into_iter().map(org_with_count_to_json).collect();
+    Ok(Json(serde_json::to_value(json)?))
 }
 
 #[derive(Deserialize)]
@@ -41,14 +47,19 @@ pub async fn create_organization(
     .await
     .map_err(|e| AppError::Internal(format!("Organization name already exists or DB error: {e}")))?;
 
-    let org: OrgRow = sqlx::query_as(
-        "SELECT id, name, sort_order, created_at, updated_at FROM organizations WHERE id = ?",
+    let org: OrgRowWithCount = sqlx::query_as(
+        "SELECT o.id, o.name, o.sort_order, o.created_at, o.updated_at,
+                COUNT(c.id) as cluster_count
+         FROM organizations o
+         LEFT JOIN cluster_contexts c ON c.organization_id = o.id
+         WHERE o.id = ?
+         GROUP BY o.id",
     )
     .bind(&id)
     .fetch_one(&state.db)
     .await?;
 
-    Ok(Json(serde_json::to_value(org)?))
+    Ok(Json(org_with_count_to_json(org)))
 }
 
 pub async fn get_organization(
@@ -129,4 +140,25 @@ struct OrgRow {
     sort_order: i64,
     created_at: String,
     updated_at: String,
+}
+
+#[derive(sqlx::FromRow)]
+struct OrgRowWithCount {
+    id: String,
+    name: String,
+    sort_order: i64,
+    created_at: String,
+    updated_at: String,
+    cluster_count: i64,
+}
+
+fn org_with_count_to_json(o: OrgRowWithCount) -> Value {
+    serde_json::json!({
+        "id": o.id,
+        "name": o.name,
+        "sortOrder": o.sort_order,
+        "createdAt": o.created_at,
+        "updatedAt": o.updated_at,
+        "_count": { "clusters": o.cluster_count }
+    })
 }
