@@ -1,10 +1,27 @@
 use std::net::TcpListener;
 use tauri::Manager;
 
-fn find_available_port(preferred: u16) -> u16 {
-    if TcpListener::bind(("127.0.0.1", preferred)).is_ok() {
-        return preferred;
+const PREFERRED_PORT: u16 = 47291;
+const FALLBACK_PORT_MIN: u16 = 40000;
+const FALLBACK_PORT_MAX: u16 = 60000;
+
+fn find_available_port() -> u16 {
+    if TcpListener::bind(("127.0.0.1", PREFERRED_PORT)).is_ok() {
+        return PREFERRED_PORT;
     }
+    // Try random ports in the fallback range
+    let range = (FALLBACK_PORT_MAX - FALLBACK_PORT_MIN) as u32;
+    let seed = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.subsec_nanos())
+        .unwrap_or(12345);
+    for i in 0..50 {
+        let port = FALLBACK_PORT_MIN + (((seed.wrapping_add(i * 1337)) % range) as u16);
+        if TcpListener::bind(("127.0.0.1", port)).is_ok() {
+            return port;
+        }
+    }
+    // Last resort: let the OS pick
     let listener = TcpListener::bind(("127.0.0.1", 0)).expect("Failed to find available port");
     listener.local_addr().unwrap().port()
 }
@@ -69,7 +86,7 @@ pub fn run() {
                 return Ok(());
             }
 
-            let port = find_available_port(3000);
+            let port = find_available_port();
             let database_url = get_database_url(app);
 
             eprintln!("[tauri] Starting embedded Axum server on port {port}");
