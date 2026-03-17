@@ -38,7 +38,7 @@ fn fix_path() {
     }
 }
 
-fn get_database_url(app: &tauri::App) -> String {
+fn get_database_url(_app: &tauri::App) -> String {
     let db_dir = if cfg!(target_os = "macos") {
         dirs::home_dir()
             .expect("Failed to resolve home dir")
@@ -51,47 +51,6 @@ fn get_database_url(app: &tauri::App) -> String {
     std::fs::create_dir_all(&db_dir).ok();
     let db_path = db_dir.join("klustreye.db");
     format!("file:{}", db_path.to_string_lossy().replace('\\', "/"))
-}
-
-fn clear_webview_cache(app: &tauri::App) {
-    // All known bundle/product name variants across current and legacy builds.
-    let app_names: &[&str] = &["com.klustreye.desktop", "klustreye", "com.klustreye.app", "KlustrEye"];
-
-    if let Some(cache_dir) = dirs::cache_dir() {
-        for name in app_names {
-            let p = cache_dir.join(name);
-            if p.exists() { let _ = std::fs::remove_dir_all(&p); }
-        }
-    }
-
-    if cfg!(target_os = "macos") {
-        if let Some(home) = dirs::home_dir() {
-            // WKWebView HTTP cache (~/Library/WebKit/{name}/)
-            let webkit_dir = home.join("Library/WebKit");
-            for name in app_names {
-                let p = webkit_dir.join(name);
-                if p.exists() { let _ = std::fs::remove_dir_all(&p); }
-            }
-            // Chromium-style disk cache stored under Application Support —
-            // present when Tauri uses a custom WKWebsiteDataStore
-            let app_support = home.join("Library/Application Support");
-            for name in app_names {
-                for sub in &["Cache", "Code Cache", "GPUCache", "DawnGraphiteCache", "DawnWebGPUCache", "Shared Dictionary"] {
-                    let p = app_support.join(name).join(sub);
-                    if p.exists() { let _ = std::fs::remove_dir_all(&p); }
-                }
-            }
-        }
-    }
-
-    if cfg!(windows) {
-        if let Ok(app_data) = app.path().app_data_dir() {
-            let webview_data = app_data.join("EBWebView");
-            if webview_data.exists() {
-                let _ = std::fs::remove_dir_all(&webview_data);
-            }
-        }
-    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -124,36 +83,21 @@ pub fn run() {
                 }
             });
 
-            clear_webview_cache(app);
-
             let window = app
                 .get_webview_window("main")
                 .expect("Failed to get main window");
-
-            // Clear ALL cached assets so updates are always picked up on install.
-            window.clear_all_browsing_data().ok();
 
             let version = app.package_info().version.to_string();
 
             std::thread::spawn(move || {
                 if wait_for_server(port, 15000) {
-                    // Use a per-launch timestamp nonce so WebKit can never serve
-                    // a cached index.html — every app launch gets a unique URL.
-                    let nonce = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_secs();
-                    let url: tauri::Url = format!("http://localhost:{port}/?v={version}&t={nonce}")
+                    // Include version so WebKit fetches a fresh index.html after updates.
+                    let url: tauri::Url = format!("http://localhost:{port}/?v={version}")
                         .parse()
                         .unwrap();
                     let _ = window.navigate(url);
-                    // Brief pause to let the WebView start the navigation before showing
-                    std::thread::sleep(std::time::Duration::from_millis(300));
-                    let _ = window.show();
                 } else {
                     eprintln!("[tauri] Server did not start within 15 seconds");
-                    // Show window anyway so user isn't stuck with a blank screen
-                    let _ = window.show();
                 }
             });
 
