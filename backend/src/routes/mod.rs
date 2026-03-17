@@ -1,4 +1,5 @@
 pub mod clusters;
+pub mod grafana;
 pub mod helm;
 pub mod logs;
 pub mod metrics;
@@ -78,6 +79,13 @@ pub fn build_router(state: AppState) -> Router {
             .put(organizations::update_organization)
             .delete(organizations::delete_organization)
         )
+        // Grafana / Mimir plugin
+        .route("/api/clusters/:ctx/plugins/grafana/settings",
+            get(grafana::get_settings)
+            .put(grafana::put_settings)
+            .post(grafana::test_connection))
+        .route("/api/clusters/:ctx/plugins/grafana/query",
+            post(grafana::query))
         // OpenCost plugin
         .route("/api/clusters/:ctx/plugins/opencost/settings",
             get(opencost::get_settings)
