@@ -10,6 +10,7 @@ export interface OpenCostSettings {
   prometheusUrl: string;
   hasPrometheusToken: boolean;
   grafanaConfigured: boolean;
+  clusterLabel: string;
 }
 
 export function useOpenCostSettings(contextName: string) {
@@ -35,6 +36,7 @@ export function useSaveOpenCostSettings(contextName: string) {
       metricsSource?: MetricsSource;
       prometheusUrl?: string;
       prometheusToken?: string;
+      clusterLabel?: string;
     }) => {
       const res = await fetch(
         `/api/clusters/${encodeURIComponent(contextName)}/plugins/opencost/settings`,

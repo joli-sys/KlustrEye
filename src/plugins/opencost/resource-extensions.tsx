@@ -20,7 +20,7 @@ export function OpenCostPodExtension({ contextName, name, namespace }: PluginRes
 
   const { data, isLoading, error } = useAllocation(
     contextName,
-    "1d",
+    "1h",
     "pod",
     namespace,
     !!isConfigured
@@ -35,7 +35,7 @@ export function OpenCostPodExtension({ contextName, name, namespace }: PluginRes
       <CardHeader className="pb-2">
         <CardTitle className="text-sm flex items-center gap-1.5">
           <CircleDollarSign className="h-4 w-4 text-green-500" />
-          Cost (last 24h)
+          Cost (last 1h)
         </CardTitle>
       </CardHeader>
       <CardContent>
@@ -82,7 +82,7 @@ export function OpenCostNodeExtension({ contextName, name }: PluginResourceExten
 
   const { data, isLoading, error } = useAllocation(
     contextName,
-    "1d",
+    "1h",
     "node",
     undefined,
     !!isConfigured
@@ -97,7 +97,7 @@ export function OpenCostNodeExtension({ contextName, name }: PluginResourceExten
       <CardHeader className="pb-2">
         <CardTitle className="text-sm flex items-center gap-1.5">
           <CircleDollarSign className="h-4 w-4 text-green-500" />
-          Cost (last 24h)
+          Cost (last 1h)
         </CardTitle>
       </CardHeader>
       <CardContent>

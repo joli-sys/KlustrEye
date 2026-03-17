@@ -20,12 +20,14 @@ export function OpenCostSettingsPanel({ contextName }: { contextName: string }) 
   const [metricsSource, setMetricsSource] = useState<MetricsSource>("opencost");
   const [prometheusUrl, setPrometheusUrl] = useState("");
   const [prometheusToken, setPrometheusToken] = useState("");
+  const [clusterLabel, setClusterLabel] = useState("");
 
   useEffect(() => {
     if (settings) {
       setUrl(settings.url || "");
       setMetricsSource(settings.metricsSource || "opencost");
       setPrometheusUrl(settings.prometheusUrl || "");
+      setClusterLabel(settings.clusterLabel || "");
     }
   }, [settings]);
 
@@ -157,6 +159,21 @@ export function OpenCostSettingsPanel({ contextName }: { contextName: string }) 
           </>
         )}
 
+        {/* Cluster label (prometheus + mimir) */}
+        {isPrometheus && (
+          <div>
+            <label className="text-sm font-medium mb-1 block">Cluster Label (optional)</label>
+            <Input
+              placeholder="e.g. classic-red"
+              value={clusterLabel}
+              onChange={(e) => setClusterLabel(e.target.value)}
+            />
+            <p className="text-xs text-muted-foreground mt-1">
+              Filters metrics by <span className="font-mono">cluster=&quot;…&quot;</span>. Leave blank to auto-detect from the context name.
+            </p>
+          </div>
+        )}
+
         <div className="flex gap-2">
           <Button
             variant="outline"
@@ -189,6 +206,7 @@ export function OpenCostSettingsPanel({ contextName }: { contextName: string }) 
                   metricsSource,
                   prometheusUrl: isPrometheus ? prometheusUrl : undefined,
                   prometheusToken: prometheusToken || "__keep__",
+                  clusterLabel: isPrometheus ? clusterLabel : undefined,
                 },
                 {
                   onSuccess: () => {
