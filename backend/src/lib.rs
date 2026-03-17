@@ -21,8 +21,18 @@ use tower_http::cors::{Any, CorsLayer};
 struct Assets;
 
 async fn static_handler(uri: Uri) -> impl IntoResponse {
+    // Strip query params (e.g. ?v=VERSION&t=NONCE used for cache busting) before
+    // resolving the asset path — they are only meaningful to WebKit, not the file system.
     let path = uri.path().trim_start_matches('/');
     serve_asset(if path.is_empty() { "index.html" } else { path }).await
+}
+
+fn no_cache_headers() -> [(&'static str, &'static str); 3] {
+    [
+        ("Cache-Control", "no-store, no-cache, must-revalidate"),
+        ("Pragma", "no-cache"),
+        ("Expires", "0"),
+    ]
 }
 
 async fn serve_asset(path: &str) -> Response {
@@ -31,25 +41,30 @@ async fn serve_asset(path: &str) -> Response {
             let mime = mime_guess::from_path(path).first_or_octet_stream();
             // Vite hashes JS/CSS filenames — cache them long-term.
             // HTML and other entry points must never be cached so updates are picked up.
-            let cache_control = if path.ends_with(".html") {
-                "no-store, no-cache, must-revalidate"
+            if path.ends_with(".html") {
+                let mut b = Response::builder().header(header::CONTENT_TYPE, mime.as_ref());
+                for (k, v) in no_cache_headers() {
+                    b = b.header(k, v);
+                }
+                b.body(Body::from(content.data)).unwrap()
             } else {
-                "public, max-age=31536000, immutable"
-            };
-            Response::builder()
-                .header(header::CONTENT_TYPE, mime.as_ref())
-                .header(header::CACHE_CONTROL, cache_control)
-                .body(Body::from(content.data))
-                .unwrap()
+                Response::builder()
+                    .header(header::CONTENT_TYPE, mime.as_ref())
+                    .header(header::CACHE_CONTROL, "public, max-age=31536000, immutable")
+                    .body(Body::from(content.data))
+                    .unwrap()
+            }
         }
         None => {
             // SPA fallback — serve index.html for any unknown path
             match Assets::get("index.html") {
-                Some(content) => Response::builder()
-                    .header(header::CONTENT_TYPE, "text/html")
-                    .header(header::CACHE_CONTROL, "no-store, no-cache, must-revalidate")
-                    .body(Body::from(content.data))
-                    .unwrap(),
+                Some(content) => {
+                    let mut b = Response::builder().header(header::CONTENT_TYPE, "text/html");
+                    for (k, v) in no_cache_headers() {
+                        b = b.header(k, v);
+                    }
+                    b.body(Body::from(content.data)).unwrap()
+                }
                 None => Response::builder()
                     .status(StatusCode::NOT_FOUND)
                     .body(Body::from("404"))
