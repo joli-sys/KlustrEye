@@ -140,8 +140,8 @@ export function usePodHistoricalMetrics(
       ];
       const data = await fetchGrafanaMetrics(contextName, queries, timeRange);
       return {
-        cpu: data.series[0] ?? [],
-        memory: data.series[1] ?? [],
+        cpu: Array.isArray(data.series[0]) ? data.series[0] : [],
+        memory: Array.isArray(data.series[1]) ? data.series[1] : [],
         queries: data.queries,
       };
     },
@@ -163,8 +163,8 @@ export function useNodeHistoricalMetrics(
       const queries = [nodeCpuQuery(nodeName), nodeMemoryQuery(nodeName)];
       const data = await fetchGrafanaMetrics(contextName, queries, timeRange);
       return {
-        cpu: data.series[0] ?? [],
-        memory: data.series[1] ?? [],
+        cpu: Array.isArray(data.series[0]) ? data.series[0] : [],
+        memory: Array.isArray(data.series[1]) ? data.series[1] : [],
         queries: data.queries,
       };
     },
