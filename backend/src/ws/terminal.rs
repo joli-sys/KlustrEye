@@ -25,18 +25,18 @@ async fn run_terminal(
 ) -> anyhow::Result<()> {
     let pods: Api<Pod> = Api::namespaced(client, namespace);
 
-    let mut attached = pods
-        .exec(
-            pod,
-            ["/bin/sh", "-c", "exec bash 2>/dev/null || exec sh"],
-            &AttachParams::default()
-                .container(container)
-                .stdin(true)
-                .stdout(true)
-                .stderr(false)
-                .tty(true),
-        )
-        .await?;
+    let params = AttachParams::default()
+        .container(container)
+        .stdin(true)
+        .stdout(true)
+        .stderr(false)
+        .tty(true);
+
+    // Try bash first (like `kubectl exec -it -- bash`), fall back to sh
+    let mut attached = match pods.exec(pod, ["bash"], &params).await {
+        Ok(a) => a,
+        Err(_) => pods.exec(pod, ["sh"], &params).await?,
+    };
 
     let mut stdin = attached.stdin().ok_or_else(|| anyhow::anyhow!("No stdin"))?;
     let mut stdout = attached.stdout().ok_or_else(|| anyhow::anyhow!("No stdout"))?;
