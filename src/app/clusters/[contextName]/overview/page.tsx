@@ -84,6 +84,45 @@ function formatCost(v: number) {
   return `$${v.toFixed(2)}`;
 }
 
+function ClusterUtilizationRow({
+  clusterResources,
+  contextName,
+}: {
+  clusterResources: { cpuUsed: number; cpuTotal: number; memUsed: number; memTotal: number };
+  contextName: string;
+}) {
+  const { data: settings } = useOpenCostSettings(contextName);
+  const isConfigured =
+    settings &&
+    ((settings.metricsSource === "opencost" && !!settings.url) ||
+      (settings.metricsSource === "prometheus" && !!settings.prometheusUrl) ||
+      (settings.metricsSource === "mimir" && !!settings.grafanaConfigured));
+
+  const cols = isConfigured ? "grid-cols-1 sm:grid-cols-2 lg:grid-cols-3" : "grid-cols-1 sm:grid-cols-2";
+
+  return (
+    <div className={`grid ${cols} gap-4`}>
+      <GaugeCard
+        label="Cluster CPU"
+        icon={Cpu}
+        used={clusterResources.cpuUsed}
+        total={clusterResources.cpuTotal}
+        formatFn={formatCpu}
+        color="text-blue-400"
+      />
+      <GaugeCard
+        label="Cluster Memory"
+        icon={MemoryStick}
+        used={clusterResources.memUsed}
+        total={clusterResources.memTotal}
+        formatFn={formatBytes}
+        color="text-purple-400"
+      />
+      {isConfigured && <ClusterCostCard contextName={contextName} />}
+    </div>
+  );
+}
+
 function ClusterCostCard({ contextName }: { contextName: string }) {
   const { data: settings } = useOpenCostSettings(contextName);
   const isConfigured =
@@ -244,25 +283,7 @@ export default function OverviewPage() {
       </div>
 
       {clusterResources && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          <GaugeCard
-            label="Cluster CPU"
-            icon={Cpu}
-            used={clusterResources.cpuUsed}
-            total={clusterResources.cpuTotal}
-            formatFn={formatCpu}
-            color="text-blue-400"
-          />
-          <GaugeCard
-            label="Cluster Memory"
-            icon={MemoryStick}
-            used={clusterResources.memUsed}
-            total={clusterResources.memTotal}
-            formatFn={formatBytes}
-            color="text-purple-400"
-          />
-          <ClusterCostCard contextName={ctx} />
-        </div>
+        <ClusterUtilizationRow clusterResources={clusterResources} contextName={ctx} />
       )}
 
       {events && events.length > 0 && (() => {
