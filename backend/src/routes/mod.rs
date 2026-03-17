@@ -79,7 +79,7 @@ pub fn build_router(state: AppState) -> Router {
         )
         // Settings
         .route("/api/settings/kubeconfig",
-            get(settings::get_kubeconfig).post(settings::set_kubeconfig))
+            get(settings::get_kubeconfig).put(settings::set_kubeconfig))
         // WebSocket: terminal & shell
         .route("/ws/terminal/:ctx/:namespace/:pod/:container", get(ws_terminal_handler))
         .route("/ws/shell/:ctx", get(ws_shell_handler))

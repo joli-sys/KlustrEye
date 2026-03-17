@@ -67,13 +67,19 @@ pub async fn list_namespaces(
     let list = ns_api.list(&ListParams::default()).await
         .map_err(|e| AppError::Kubernetes(e.to_string()))?;
 
-    let names: Vec<&str> = list
+    let namespaces: Vec<Value> = list
         .items
         .iter()
-        .filter_map(|n| n.metadata.name.as_deref())
+        .filter_map(|n| {
+            let name = n.metadata.name.as_deref()?;
+            let status = n.status.as_ref()
+                .and_then(|s| s.phase.as_deref())
+                .unwrap_or("Active");
+            Some(serde_json::json!({ "name": name, "status": status }))
+        })
         .collect();
 
-    Ok(Json(serde_json::json!({ "namespaces": names })))
+    Ok(Json(Value::Array(namespaces)))
 }
 
 pub async fn get_events(

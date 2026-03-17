@@ -58,10 +58,15 @@ jobs:
       - name: Build frontend
         run: npm run build:frontend
 
-      - name: Build Tauri app
+      - name: Build Tauri app (macOS / Linux)
+        if: inputs.platform != 'windows-x64'
         env:
           APPLE_SIGNING_IDENTITY: "-"
         run: npx tauri build --target ${{ inputs.rust-target }}
+
+      - name: Build Tauri app (Windows — NSIS only, MSI skipped for semver pre-release)
+        if: inputs.platform == 'windows-x64'
+        run: npx tauri build --target ${{ inputs.rust-target }} --bundles nsis
 
       - name: Get version
         id: version
