@@ -27,7 +27,7 @@ A native desktop Kubernetes IDE built with Tauri, React, and Rust. Connect to re
 - **Per-cluster color schemes** — 16 color presets across the OKLCH color wheel for visually distinguishing clusters
 - **Cluster renaming** — set custom display names for clusters
 - **Sidebar cluster switcher** — quickly switch between clusters, grouped by organization, with search filter and full keyboard navigation
-- **Default namespace** — configurable default namespace per cluster via settings page
+- **Default namespace** — configurable default namespace, display name, and organization assignment via the cluster settings page
 - **Cluster shell terminal** — open a local shell scoped to a cluster context (portable-pty + WebSocket backend)
 
 ### Workload Management
@@ -52,7 +52,7 @@ A native desktop Kubernetes IDE built with Tauri, React, and Rust. Connect to re
 ### Monitoring & Debugging
 - **Pod logs** — real-time streaming via the Kubernetes Log API with search and filtering
 - **Pod terminal** — interactive terminal sessions via xterm.js and WebSocket
-- **Node and pod metrics** — CPU and memory usage from metrics-server
+- **Node and pod metrics** — CPU and memory usage from metrics-server with SVG gauge charts on cluster overview
 - **Historical metrics** — Grafana/Mimir integration for historical CPU and memory charts on pod and node detail pages
 - **Events** — cluster-wide and resource-scoped event viewing with expandable messages and sortable columns
 - **Port forwarding** — create port forwards with automatic browser open
@@ -60,9 +60,10 @@ A native desktop Kubernetes IDE built with Tauri, React, and Rust. Connect to re
 ### Plugin System
 - **Dynamic plugin architecture** — drop-in plugin directories under `src/plugins/` with auto-discovery
 - **Self-contained plugins** — each plugin bundles its own manifest, components, settings panel, and page
-- **Resource extensions** — plugins can inject UI into pod and node detail pages (e.g. historical metrics tabs)
+- **Resource extensions** — plugins can inject UI into pod and node detail pages (e.g. historical metrics tabs, cost cards)
 - **Sidebar integration** — plugins with `hasPage: true` appear automatically under an "Integrations" sidebar section
-- **Grafana plugin** — ships with a built-in Grafana/Mimir plugin for historical Prometheus metrics
+- **Grafana plugin** — built-in Grafana/Mimir plugin for historical CPU and memory charts on pod and node detail pages
+- **OpenCost plugin** — Kubernetes cost monitoring with three backends: OpenCost REST API, Prometheus, or Mimir/Grafana. Allocation breakdown by namespace, pod, and node; cluster-level hourly rate and monthly estimate on the overview page; per-pod and per-node cost cards in resource detail pages. Filters metrics by cluster label (auto-extracted from EKS ARN / GKE context)
 
 ### Network
 - **Network Map** — visual topology diagram showing Ingress → Service → Pod relationships using React Flow with auto-layout (dagre), click-to-navigate, and namespace filtering
@@ -80,6 +81,7 @@ A native desktop Kubernetes IDE built with Tauri, React, and Rust. Connect to re
 - **Keyboard shortcuts** — Cmd+T / Ctrl+T to open cluster shell terminal
 
 ### Responsive Design
+- **Light/dark mode** — manual toggle with system preference detection
 - **Mobile sidebar** — off-canvas drawer with backdrop on small screens
 - **Adaptive tables** — responsive column hiding at different breakpoints
 - **Lightweight window** — native OS webview via Tauri (no bundled Chromium)
@@ -196,7 +198,8 @@ src/                          # React frontend (Vite)
     plugins/                  # Plugin system types and registry
     stores/                   # Zustand stores
   plugins/
-    grafana/                  # Grafana/Mimir plugin
+    grafana/                  # Grafana/Mimir plugin (historical metrics)
+    opencost/                 # OpenCost plugin (cost monitoring)
 
 backend/                      # Rust Axum server
   src/
