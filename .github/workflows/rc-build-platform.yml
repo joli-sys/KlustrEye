@@ -66,16 +66,7 @@ jobs:
 
       - name: Build Tauri app (Windows)
         if: inputs.platform == 'windows-x64'
-        shell: bash
-        run: |
-          VERSION=$(node -p 'require("./package.json").version')
-          # WiX requires numeric-only version components (e.g. 0.3.0.1 for 0.3.0-rc.1)
-          WIX_VERSION=$(node -e "
-            const v = '$VERSION';
-            const m = v.match(/^(\d+\.\d+\.\d+)-[a-zA-Z]+\.(\d+)$/);
-            console.log(m ? m[1] + '.' + m[2] : v.replace(/-.*$/, '') + '.0');
-          ")
-          npx tauri build --target ${{ inputs.rust-target }} --config "{\"bundle\":{\"windows\":{\"wix\":{\"version\":\"$WIX_VERSION\"}}}}"
+        run: npx tauri build --target ${{ inputs.rust-target }} --bundles nsis
 
       - name: Get version
         id: version
@@ -95,9 +86,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: KlustrEye-${{ steps.version.outputs.version }}-rc-${{ inputs.platform }}
-          path: |
-            target/${{ inputs.rust-target }}/release/bundle/nsis/*.exe
-            target/${{ inputs.rust-target }}/release/bundle/msi/*.msi
+          path: target/${{ inputs.rust-target }}/release/bundle/nsis/*.exe
           retention-days: 14
 
       - name: Upload artifacts (Linux)
