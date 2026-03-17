@@ -4,14 +4,16 @@ import { NamespaceSelector } from "@/components/namespace-selector";
 import { PortForwardIndicator } from "@/components/port-forward-indicator";
 import { useClusters } from "@/hooks/use-clusters";
 import { Button } from "@/components/ui/button";
-import { Search, Menu, Terminal, Keyboard } from "lucide-react";
+import { Search, Menu, Terminal, Keyboard, Sun, Moon } from "lucide-react";
 import { KeyboardShortcutsDialog, useKeyboardShortcutsDialog } from "@/components/keyboard-shortcuts-dialog";
 import { useUIStore } from "@/lib/stores/ui-store";
+import { useTheme } from "@/hooks/use-theme";
 
 export function Header({ contextName }: { contextName: string }) {
   const { setCommandPaletteOpen, setMobileSidebarOpen, toggleShellTerminal, shellTerminalOpen } = useUIStore();
   const { open: shortcutsOpen, setOpen: setShortcutsOpen } = useKeyboardShortcutsDialog();
   const { data: clusters } = useClusters();
+  const { theme, toggle: toggleTheme } = useTheme();
   const current = clusters?.find((c) => c.name === contextName);
   const displayName = current?.displayName;
 
@@ -59,6 +61,15 @@ export function Header({ contextName }: { contextName: string }) {
           <kbd className="ml-2 pointer-events-none hidden sm:inline-flex h-5 select-none items-center gap-1 rounded border bg-muted px-1.5 font-mono text-[10px] font-medium text-muted-foreground">
             <span className="text-xs">⌘</span>K
           </kbd>
+        </Button>
+        <Button
+          variant="outline"
+          size="icon"
+          className="h-8 w-8 text-muted-foreground"
+          onClick={toggleTheme}
+          title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+        >
+          {theme === "dark" ? <Sun className="h-3.5 w-3.5" /> : <Moon className="h-3.5 w-3.5" />}
         </Button>
         <Button
           variant="outline"

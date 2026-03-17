@@ -1,7 +1,9 @@
 pub mod clusters;
+pub mod grafana;
 pub mod helm;
 pub mod logs;
 pub mod metrics;
+pub mod opencost;
 pub mod organizations;
 pub mod port_forward;
 pub mod resources;
@@ -77,9 +79,27 @@ pub fn build_router(state: AppState) -> Router {
             .put(organizations::update_organization)
             .delete(organizations::delete_organization)
         )
+        // Grafana / Mimir plugin
+        .route("/api/clusters/:ctx/plugins/grafana/settings",
+            get(grafana::get_settings)
+            .put(grafana::put_settings)
+            .post(grafana::test_connection))
+        .route("/api/clusters/:ctx/plugins/grafana/query",
+            post(grafana::query))
+        // OpenCost plugin
+        .route("/api/clusters/:ctx/plugins/opencost/settings",
+            get(opencost::get_settings)
+            .put(opencost::put_settings)
+            .post(opencost::test_connection))
+        .route("/api/clusters/:ctx/plugins/opencost/allocation",
+            get(opencost::get_allocation))
+        .route("/api/clusters/:ctx/plugins/opencost/assets",
+            get(opencost::get_assets))
+        .route("/api/clusters/:ctx/plugins/opencost/summary",
+            get(opencost::get_summary))
         // Settings
         .route("/api/settings/kubeconfig",
-            get(settings::get_kubeconfig).post(settings::set_kubeconfig))
+            get(settings::get_kubeconfig).put(settings::set_kubeconfig))
         // WebSocket: terminal & shell
         .route("/ws/terminal/:ctx/:namespace/:pod/:container", get(ws_terminal_handler))
         .route("/ws/shell/:ctx", get(ws_shell_handler))

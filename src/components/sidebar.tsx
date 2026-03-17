@@ -15,7 +15,7 @@ import {
   Network, Globe, FileText, KeyRound, UserCog, HardDrive, Activity, Anchor,
   Puzzle, Cable, Share2, ShieldCheck, ArrowUpDown, SlidersHorizontal,
   PanelLeftClose, PanelLeft, Settings, BarChart3, Star, X,
-  Shield, UserCheck, UsersRound,
+  Shield, UserCheck, UsersRound, CircleDollarSign,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { getPluginsWithPages } from "@/lib/plugins/registry";
@@ -24,7 +24,7 @@ const iconMap: Record<string, React.ComponentType<{ className?: string }>> = {
   LayoutDashboard, Server, Box, Layers, Database, Cpu, Copy, Play, Clock,
   Network, Globe, FileText, KeyRound, UserCog, HardDrive, Activity, Anchor,
   Puzzle, Cable, Share2, ShieldCheck, ArrowUpDown, SlidersHorizontal, Settings, BarChart3,
-  Shield, UserCheck, UsersRound,
+  Shield, UserCheck, UsersRound, CircleDollarSign,
 };
 
 const pagePlugins = getPluginsWithPages();

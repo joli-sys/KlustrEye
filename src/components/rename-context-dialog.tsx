@@ -40,7 +40,7 @@ export function RenameContextDialog({
       const res = await fetch(
         `/api/clusters/${encodeURIComponent(contextName)}/rename`,
         {
-          method: "PATCH",
+          method: "PUT",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ displayName: name }),
         }

@@ -58,10 +58,15 @@ jobs:
       - name: Build frontend
         run: npm run build:frontend
 
-      - name: Build Tauri app
+      - name: Build Tauri app (macOS / Linux)
+        if: inputs.platform != 'windows-x64'
         env:
           APPLE_SIGNING_IDENTITY: "-"
         run: npx tauri build --target ${{ inputs.rust-target }}
+
+      - name: Build Tauri app (Windows)
+        if: inputs.platform == 'windows-x64'
+        run: npx tauri build --target ${{ inputs.rust-target }} --bundles nsis
 
       - name: Get version
         id: version
@@ -81,9 +86,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: KlustrEye-${{ steps.version.outputs.version }}-rc-${{ inputs.platform }}
-          path: |
-            target/${{ inputs.rust-target }}/release/bundle/nsis/*.exe
-            target/${{ inputs.rust-target }}/release/bundle/msi/*.msi
+          path: target/${{ inputs.rust-target }}/release/bundle/nsis/*.exe
           retention-days: 14
 
       - name: Upload artifacts (Linux)

@@ -52,3 +52,4 @@ jobs:
         with:
           name: KlustrEye v${{ steps.version.outputs.version }}
           generate_release_notes: true
+          prerelease: ${{ contains(github.ref_name, '-rc') }}

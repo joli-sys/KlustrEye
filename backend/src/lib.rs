@@ -4,11 +4,60 @@ pub mod k8s;
 pub mod routes;
 pub mod ws;
 
+use axum::{
+    body::Body,
+    http::{header, StatusCode, Uri},
+    response::{IntoResponse, Response},
+};
 use k8s::client::KubeClientCache;
 use k8s::port_forward::PortForwardProcesses;
+use rust_embed::RustEmbed;
 use sqlx::SqlitePool;
 use std::sync::Arc;
 use tower_http::cors::{Any, CorsLayer};
+
+#[derive(RustEmbed)]
+#[folder = "../dist"]
+struct Assets;
+
+async fn static_handler(uri: Uri) -> impl IntoResponse {
+    let path = uri.path().trim_start_matches('/');
+    serve_asset(if path.is_empty() { "index.html" } else { path }).await
+}
+
+async fn serve_asset(path: &str) -> Response {
+    match Assets::get(path) {
+        Some(content) => {
+            let mime = mime_guess::from_path(path).first_or_octet_stream();
+            // Vite hashes JS/CSS filenames — safe to cache long-term.
+            // HTML must not be cached so version updates are always picked up.
+            let cache_control = if path.ends_with(".html") {
+                "no-store"
+            } else {
+                "public, max-age=31536000, immutable"
+            };
+            Response::builder()
+                .header(header::CONTENT_TYPE, mime.as_ref())
+                .header(header::CACHE_CONTROL, cache_control)
+                .body(Body::from(content.data))
+                .unwrap()
+        }
+        None => {
+            // SPA fallback — serve index.html for any unknown path
+            match Assets::get("index.html") {
+                Some(content) => Response::builder()
+                    .header(header::CONTENT_TYPE, "text/html")
+                    .header(header::CACHE_CONTROL, "no-store")
+                    .body(Body::from(content.data))
+                    .unwrap(),
+                None => Response::builder()
+                    .status(StatusCode::NOT_FOUND)
+                    .body(Body::from("404"))
+                    .unwrap(),
+            }
+        }
+    }
+}
 
 #[derive(Clone)]
 pub struct AppState {
@@ -49,12 +98,14 @@ pub async fn start_server(port: u16, database_url: &str) -> anyhow::Result<()> {
         port_forwards: port_forwards.clone(),
     };
 
-    let app = routes::build_router(state.clone()).layer(
-        CorsLayer::new()
-            .allow_origin(Any)
-            .allow_methods(Any)
-            .allow_headers(Any),
-    );
+    let app = routes::build_router(state.clone())
+        .fallback(static_handler)
+        .layer(
+            CorsLayer::new()
+                .allow_origin(Any)
+                .allow_methods(Any)
+                .allow_headers(Any),
+        );
 
     let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
     tracing::info!("Server listening on http://{addr}");

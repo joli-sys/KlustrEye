@@ -6,9 +6,10 @@ import { useClusterNamespace } from "@/hooks/use-cluster-namespace";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Server, Box, Layers, Network, Cpu, MemoryStick, AlertTriangle, Info, AlertCircle, ChevronDown, ChevronRight } from "lucide-react";
+import { Server, Box, Layers, Network, Cpu, MemoryStick, AlertTriangle, Info, AlertCircle, ChevronDown, ChevronRight, CircleDollarSign } from "lucide-react";
 import { CloudProviderIcon } from "@/components/cloud-provider-icon";
 import { parseCpuValue, parseMemoryValue, formatBytes, formatCpu, formatAge } from "@/lib/utils";
+import { useOpenCostSettings, useClusterCostSummary } from "@/plugins/opencost/hooks";
 import { getResourceHref } from "@/lib/constants";
 import { Link, useParams } from "react-router-dom";
 
@@ -20,7 +21,40 @@ const SINGULAR_TO_PLURAL: Record<string, string> = {
   Node: "nodes", Namespace: "namespaces",
 };
 
-function ClusterResourceBar({ label, icon: Icon, used, total, formatFn, color }: {
+function GaugeChart({ pct }: { pct: number }) {
+  const r = 54;
+  const cx = 64;
+  const cy = 64;
+  const startAngle = -210;
+  const endAngle = 30;
+  const totalAngle = endAngle - startAngle; // 240°
+
+  const toRad = (deg: number) => (deg * Math.PI) / 180;
+  const arcX = (deg: number) => cx + r * Math.cos(toRad(deg));
+  const arcY = (deg: number) => cy + r * Math.sin(toRad(deg));
+
+  const fillAngle = startAngle + (totalAngle * Math.min(pct, 100)) / 100;
+  const color = pct > 80 ? "#ef4444" : pct > 60 ? "#eab308" : "#22c55e";
+
+  const bgPath = `M ${arcX(startAngle)} ${arcY(startAngle)} A ${r} ${r} 0 1 1 ${arcX(endAngle)} ${arcY(endAngle)}`;
+  const fgPath = pct <= 0
+    ? ""
+    : `M ${arcX(startAngle)} ${arcY(startAngle)} A ${r} ${r} 0 ${fillAngle - startAngle > 180 ? 1 : 0} 1 ${arcX(fillAngle)} ${arcY(fillAngle)}`;
+
+  return (
+    <svg viewBox="0 0 128 80" className="w-full max-w-[180px]">
+      <path d={bgPath} fill="none" stroke="currentColor" strokeWidth="10" strokeLinecap="round" className="text-muted" />
+      {fgPath && (
+        <path d={fgPath} fill="none" stroke={color} strokeWidth="10" strokeLinecap="round" />
+      )}
+      <text x="64" y="62" textAnchor="middle" dominantBaseline="middle" className="fill-foreground" fontSize="18" fontWeight="bold">
+        {pct.toFixed(1)}%
+      </text>
+    </svg>
+  );
+}
+
+function GaugeCard({ label, icon: Icon, used, total, formatFn, color }: {
   label: string;
   icon: React.ComponentType<{ className?: string }>;
   used: number;
@@ -35,17 +69,89 @@ function ClusterResourceBar({ label, icon: Icon, used, total, formatFn, color }:
         <CardTitle className="text-sm font-medium text-muted-foreground">{label}</CardTitle>
         <Icon className={`h-4 w-4 ${color}`} />
       </CardHeader>
-      <CardContent>
-        <div className="text-2xl font-bold">{pct.toFixed(1)}%</div>
-        <div className="h-3 rounded-full bg-muted overflow-hidden mt-2">
-          <div
-            className={`h-full rounded-full transition-all ${pct > 80 ? "bg-red-500" : pct > 60 ? "bg-yellow-500" : "bg-green-500"}`}
-            style={{ width: `${Math.min(pct, 100)}%` }}
-          />
-        </div>
-        <p className="text-xs text-muted-foreground mt-1">
+      <CardContent className="flex flex-col items-center gap-1">
+        <GaugeChart pct={pct} />
+        <p className="text-xs text-muted-foreground">
           {formatFn(used)} / {formatFn(total)}
         </p>
+      </CardContent>
+    </Card>
+  );
+}
+
+function formatCost(v: number) {
+  if (v < 0.01) return `$${v.toFixed(4)}`;
+  return `$${v.toFixed(2)}`;
+}
+
+function ClusterUtilizationRow({
+  clusterResources,
+  contextName,
+}: {
+  clusterResources: { cpuUsed: number; cpuTotal: number; memUsed: number; memTotal: number };
+  contextName: string;
+}) {
+  const { data: settings } = useOpenCostSettings(contextName);
+  const isConfigured =
+    settings &&
+    ((settings.metricsSource === "opencost" && !!settings.url) ||
+      (settings.metricsSource === "prometheus" && !!settings.prometheusUrl) ||
+      (settings.metricsSource === "mimir" && !!settings.grafanaConfigured));
+
+  const cols = isConfigured ? "grid-cols-1 sm:grid-cols-2 lg:grid-cols-3" : "grid-cols-1 sm:grid-cols-2";
+
+  return (
+    <div className={`grid ${cols} gap-4`}>
+      <GaugeCard
+        label="Cluster CPU"
+        icon={Cpu}
+        used={clusterResources.cpuUsed}
+        total={clusterResources.cpuTotal}
+        formatFn={formatCpu}
+        color="text-blue-400"
+      />
+      <GaugeCard
+        label="Cluster Memory"
+        icon={MemoryStick}
+        used={clusterResources.memUsed}
+        total={clusterResources.memTotal}
+        formatFn={formatBytes}
+        color="text-purple-400"
+      />
+      {isConfigured && <ClusterCostCard contextName={contextName} />}
+    </div>
+  );
+}
+
+function ClusterCostCard({ contextName }: { contextName: string }) {
+  const { data: settings } = useOpenCostSettings(contextName);
+  const isConfigured =
+    settings &&
+    ((settings.metricsSource === "opencost" && !!settings.url) ||
+      (settings.metricsSource === "prometheus" && !!settings.prometheusUrl) ||
+      (settings.metricsSource === "mimir" && !!settings.grafanaConfigured));
+
+  const { data } = useClusterCostSummary(contextName, !!isConfigured);
+
+  if (!isConfigured || !data?.hourly) return null;
+
+  return (
+    <Card>
+      <CardHeader className="flex flex-row items-center justify-between pb-2">
+        <CardTitle className="text-sm font-medium text-muted-foreground">Cluster Cost</CardTitle>
+        <CircleDollarSign className="h-4 w-4 text-green-500" />
+      </CardHeader>
+      <CardContent className="flex flex-col gap-3 pt-1">
+        <div>
+          <p className="text-xs text-muted-foreground mb-0.5">Hourly rate</p>
+          <p className="text-2xl font-bold tabular-nums">{formatCost(data.hourly)}</p>
+        </div>
+        <div>
+          <p className="text-xs text-muted-foreground mb-0.5">Monthly est.</p>
+          <p className="text-lg font-semibold tabular-nums text-muted-foreground">
+            {formatCost(data.monthly ?? data.hourly * 730)}
+          </p>
+        </div>
       </CardContent>
     </Card>
   );
@@ -177,24 +283,7 @@ export default function OverviewPage() {
       </div>
 
       {clusterResources && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <ClusterResourceBar
-            label="Cluster CPU"
-            icon={Cpu}
-            used={clusterResources.cpuUsed}
-            total={clusterResources.cpuTotal}
-            formatFn={formatCpu}
-            color="text-blue-400"
-          />
-          <ClusterResourceBar
-            label="Cluster Memory"
-            icon={MemoryStick}
-            used={clusterResources.memUsed}
-            total={clusterResources.memTotal}
-            formatFn={formatBytes}
-            color="text-purple-400"
-          />
-        </div>
+        <ClusterUtilizationRow clusterResources={clusterResources} contextName={ctx} />
       )}
 
       {events && events.length > 0 && (() => {

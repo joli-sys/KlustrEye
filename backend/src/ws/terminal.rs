@@ -1,7 +1,7 @@
 use axum::extract::ws::{Message, WebSocket};
 use futures::{SinkExt, StreamExt};
 use k8s_openapi::api::core::v1::Pod;
-use kube::{api::AttachParams, Api, Client};
+use kube::{api::{AttachParams, TerminalSize}, Api, Client};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 pub async fn handle_terminal(
@@ -40,6 +40,12 @@ async fn run_terminal(
 
     let mut stdin = attached.stdin().ok_or_else(|| anyhow::anyhow!("No stdin"))?;
     let mut stdout = attached.stdout().ok_or_else(|| anyhow::anyhow!("No stdout"))?;
+    let mut terminal_size_tx = attached.terminal_size();
+
+    // Send a default terminal size so the shell renders a prompt immediately
+    if let Some(ref mut tx) = terminal_size_tx {
+        let _ = tx.send(TerminalSize { width: 80, height: 24 }).await;
+    }
 
     let (mut ws_sink, mut ws_stream) = socket.split();
 
@@ -59,8 +65,9 @@ async fn run_terminal(
         }
     });
 
-    // WebSocket → stdin (skip resize JSON messages)
+    // WebSocket → stdin; forward resize messages to Kubernetes TTY
     let stdin_task = tokio::spawn(async move {
+        let mut size_tx = terminal_size_tx;
         while let Some(Ok(msg)) = ws_stream.next().await {
             let data = match msg {
                 Message::Text(t) => t.into_bytes(),
@@ -69,10 +76,21 @@ async fn run_terminal(
                 _ => continue,
             };
 
-            // Check for resize messages
+            // Forward resize events to the Kubernetes exec channel
             if let Ok(json) = serde_json::from_slice::<serde_json::Value>(&data) {
                 if json.get("type").and_then(|t| t.as_str()) == Some("resize") {
-                    continue; // ignore resize in exec mode
+                    if let (Some(cols), Some(rows)) = (
+                        json.get("cols").and_then(|v| v.as_u64()),
+                        json.get("rows").and_then(|v| v.as_u64()),
+                    ) {
+                        if let Some(ref mut tx) = size_tx {
+                            let _ = tx.send(TerminalSize {
+                                width: cols as u16,
+                                height: rows as u16,
+                            }).await;
+                        }
+                    }
+                    continue;
                 }
             }
 

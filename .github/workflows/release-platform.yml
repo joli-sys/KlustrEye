@@ -61,10 +61,21 @@ jobs:
       - name: Build frontend
         run: npm run build:frontend
 
-      - name: Build Tauri app
+      - name: Build Tauri app (non-Windows)
+        if: inputs.platform != 'windows-x64'
         env:
           APPLE_SIGNING_IDENTITY: "-"
         run: npx tauri build --target ${{ inputs.rust-target }}
+
+      - name: Build Tauri app (Windows)
+        if: inputs.platform == 'windows-x64'
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF_NAME" == *"-rc"* ]]; then
+            npx tauri build --target ${{ inputs.rust-target }} --bundles nsis
+          else
+            npx tauri build --target ${{ inputs.rust-target }}
+          fi
 
       - name: Upload to GitHub Release (macOS)
         if: contains(inputs.platform, 'macos')
@@ -72,8 +83,14 @@ jobs:
         with:
           files: target/${{ inputs.rust-target }}/release/bundle/dmg/*.dmg
 
+      - name: Upload to GitHub Release (Windows, RC - NSIS only)
+        if: inputs.platform == 'windows-x64' && contains(github.ref_name, '-rc')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: target/${{ inputs.rust-target }}/release/bundle/nsis/*.exe
+
       - name: Upload to GitHub Release (Windows)
-        if: inputs.platform == 'windows-x64'
+        if: inputs.platform == 'windows-x64' && !contains(github.ref_name, '-rc')
         uses: softprops/action-gh-release@v2
         with:
           files: |
