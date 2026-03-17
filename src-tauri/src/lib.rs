@@ -96,8 +96,13 @@ pub fn run() {
                         .parse()
                         .unwrap();
                     let _ = window.navigate(url);
+                    // Brief pause to let the WebView start the navigation before showing
+                    std::thread::sleep(std::time::Duration::from_millis(300));
+                    let _ = window.show();
                 } else {
                     eprintln!("[tauri] Server did not start within 15 seconds");
+                    // Show window anyway so user isn't stuck with a blank screen
+                    let _ = window.show();
                 }
             });
 
