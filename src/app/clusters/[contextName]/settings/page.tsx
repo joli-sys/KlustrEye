@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { useToast } from "@/components/ui/toast";
 import { useClusters, useNamespaces } from "@/hooks/use-clusters";
+import { useOrganizations, useAssignClusterOrganization } from "@/hooks/use-organizations";
 import { useUIStore } from "@/lib/stores/ui-store";
 import { getPlugins } from "@/lib/plugins/registry";
 import { COLOR_PRESETS, DEFAULT_COLOR_SCHEME } from "@/lib/color-presets";
@@ -32,6 +33,43 @@ export default function SettingsPage() {
 
   const effectiveColor =
     selectedColor ?? currentCluster?.colorScheme ?? DEFAULT_COLOR_SCHEME;
+
+  const { data: organizations } = useOrganizations();
+  const assignOrg = useAssignClusterOrganization();
+
+  const [displayName, setDisplayName] = useState(currentCluster?.displayName ?? "");
+  const [savingName, setSavingName] = useState(false);
+  const [savingOrg, setSavingOrg] = useState(false);
+
+  const handleSaveDisplayName = async () => {
+    setSavingName(true);
+    try {
+      const res = await fetch(`/api/clusters/${encodeURIComponent(ctx)}/rename`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ displayName: displayName.trim() || null }),
+      });
+      if (!res.ok) throw new Error("Failed to save");
+      await queryClient.invalidateQueries({ queryKey: ["clusters"] });
+      addToast({ title: "Display name saved", variant: "success" });
+    } catch {
+      addToast({ title: "Failed to save display name", variant: "destructive" });
+    } finally {
+      setSavingName(false);
+    }
+  };
+
+  const handleSaveOrg = async (organizationId: string | null) => {
+    setSavingOrg(true);
+    try {
+      await assignOrg.mutateAsync({ contextName: ctx, organizationId });
+      addToast({ title: "Organization saved", variant: "success" });
+    } catch {
+      addToast({ title: "Failed to save organization", variant: "destructive" });
+    } finally {
+      setSavingOrg(false);
+    }
+  };
 
   const [editorFontSize, setEditorFontSize] = useState("13");
   const [pollingInterval, setPollingInterval] = useState("30");
@@ -87,6 +125,43 @@ export default function SettingsPage() {
   return (
     <div className="space-y-6 max-w-3xl">
       <h1 className="text-2xl font-bold">Settings</h1>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Cluster Identity</CardTitle>
+          <CardDescription>Customize how this cluster appears in KlustrEye</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div>
+            <label className="text-sm font-medium mb-1 block">Display Name</label>
+            <div className="flex gap-2">
+              <Input
+                value={displayName}
+                onChange={(e) => setDisplayName(e.target.value)}
+                placeholder={ctx}
+                className="max-w-xs"
+              />
+              <Button onClick={handleSaveDisplayName} disabled={savingName} size="sm">
+                {savingName ? "Saving..." : "Save"}
+              </Button>
+            </div>
+            <p className="text-xs text-muted-foreground mt-1">Leave blank to use the context name</p>
+          </div>
+          <div>
+            <label className="text-sm font-medium mb-1 block">Organization</label>
+            <Select
+              value={currentCluster?.organizationId ?? ""}
+              onChange={(e) => handleSaveOrg(e.target.value || null)}
+              disabled={savingOrg}
+              options={[
+                { value: "", label: "No organization" },
+                ...(organizations ?? []).map((o) => ({ value: o.id, label: o.name })),
+              ]}
+              className="w-48"
+            />
+          </div>
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader>
