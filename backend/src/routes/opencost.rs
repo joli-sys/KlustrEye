@@ -21,7 +21,8 @@ pub async fn get_settings(
     let cluster_id = ensure_cluster_context(&state.db, &context_name).await?;
 
     let rows: Vec<(String, String)> = sqlx::query_as(
-        "SELECT key, value FROM cluster_settings WHERE cluster_id = ? AND key LIKE 'opencost.%'",
+        "SELECT key, value FROM cluster_settings WHERE cluster_id = ?
+         AND (key LIKE 'opencost.%' OR key IN ('grafanaUrl', 'grafanaServiceAccountToken', 'grafanaDatasourceId'))",
     )
     .bind(&cluster_id)
     .fetch_all(&state.db)
@@ -29,12 +30,17 @@ pub async fn get_settings(
 
     let map: HashMap<String, String> = rows.into_iter().collect();
 
+    let grafana_configured = map.contains_key("grafanaUrl")
+        && map.contains_key("grafanaServiceAccountToken")
+        && map.contains_key("grafanaDatasourceId");
+
     Ok(Json(json!({
         "url": map.get("opencost.url").cloned().unwrap_or_default(),
         "hasToken": map.contains_key("opencost.token"),
         "metricsSource": map.get("opencost.metricsSource").cloned().unwrap_or_else(|| "opencost".to_string()),
         "prometheusUrl": map.get("opencost.prometheusUrl").cloned().unwrap_or_default(),
         "hasPrometheusToken": map.contains_key("opencost.prometheusToken"),
+        "grafanaConfigured": grafana_configured,
     })))
 }
 
@@ -193,10 +199,20 @@ struct OpenCostConfig {
     prometheus_token: Option<String>,
 }
 
+fn datasource_proxy_base(grafana_url: &str, datasource_id: &str) -> String {
+    let proxy_path = if datasource_id.chars().all(|c| c.is_ascii_digit()) {
+        format!("/api/datasources/proxy/{}", datasource_id)
+    } else {
+        format!("/api/datasources/proxy/uid/{}", datasource_id)
+    };
+    format!("{}{}", grafana_url.trim_end_matches('/'), proxy_path)
+}
+
 async fn load_config(context_name: &str, state: &AppState) -> Result<OpenCostConfig> {
     let cluster_id = ensure_cluster_context(&state.db, context_name).await?;
     let rows: Vec<(String, String)> = sqlx::query_as(
-        "SELECT key, value FROM cluster_settings WHERE cluster_id = ? AND key LIKE 'opencost.%'",
+        "SELECT key, value FROM cluster_settings WHERE cluster_id = ?
+         AND (key LIKE 'opencost.%' OR key IN ('grafanaUrl', 'grafanaServiceAccountToken', 'grafanaDatasourceId'))",
     )
     .bind(&cluster_id)
     .fetch_all(&state.db)
@@ -204,12 +220,37 @@ async fn load_config(context_name: &str, state: &AppState) -> Result<OpenCostCon
 
     let map: HashMap<String, String> = rows.into_iter().collect();
 
+    let metrics_source = map.get("opencost.metricsSource").cloned().unwrap_or_else(|| "opencost".to_string());
+
+    // When metricsSource is "mimir", use Grafana/Mimir datasource proxy settings
+    let (prometheus_url, prometheus_token) = if metrics_source == "mimir" {
+        let grafana_url = map.get("grafanaUrl").cloned().filter(|s| !s.is_empty());
+        let grafana_token = map.get("grafanaServiceAccountToken").cloned().filter(|s| !s.is_empty());
+        let datasource_id = map.get("grafanaDatasourceId").cloned().filter(|s| !s.is_empty());
+
+        match (grafana_url, datasource_id) {
+            (Some(url), Some(ds_id)) => (
+                Some(datasource_proxy_base(&url, &ds_id)),
+                grafana_token,
+            ),
+            _ => (
+                map.get("opencost.prometheusUrl").cloned().filter(|s| !s.is_empty()),
+                map.get("opencost.prometheusToken").cloned().filter(|s| !s.is_empty()),
+            ),
+        }
+    } else {
+        (
+            map.get("opencost.prometheusUrl").cloned().filter(|s| !s.is_empty()),
+            map.get("opencost.prometheusToken").cloned().filter(|s| !s.is_empty()),
+        )
+    };
+
     Ok(OpenCostConfig {
         url: map.get("opencost.url").cloned().filter(|s| !s.is_empty()),
         token: map.get("opencost.token").cloned().filter(|s| !s.is_empty()),
-        metrics_source: map.get("opencost.metricsSource").cloned().unwrap_or_else(|| "opencost".to_string()),
-        prometheus_url: map.get("opencost.prometheusUrl").cloned().filter(|s| !s.is_empty()),
-        prometheus_token: map.get("opencost.prometheusToken").cloned().filter(|s| !s.is_empty()),
+        metrics_source,
+        prometheus_url,
+        prometheus_token,
     })
 }
 

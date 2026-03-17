@@ -9,6 +9,7 @@ export interface OpenCostSettings {
   metricsSource: MetricsSource;
   prometheusUrl: string;
   hasPrometheusToken: boolean;
+  grafanaConfigured: boolean;
 }
 
 export function useOpenCostSettings(contextName: string) {

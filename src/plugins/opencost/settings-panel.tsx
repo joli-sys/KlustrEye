@@ -6,10 +6,12 @@ import { useToast } from "@/components/ui/toast";
 import { Loader2, CircleCheck, CircleX } from "lucide-react";
 import { useOpenCostSettings, useSaveOpenCostSettings, useTestOpenCostConnection } from "./hooks";
 import type { MetricsSource } from "./hooks";
+import { useGrafanaConfig } from "@/plugins/grafana/hooks";
 
 export function OpenCostSettingsPanel({ contextName }: { contextName: string }) {
   const { addToast } = useToast();
   const { data: settings } = useOpenCostSettings(contextName);
+  const { data: grafanaConfig } = useGrafanaConfig(contextName);
   const save = useSaveOpenCostSettings(contextName);
   const test = useTestOpenCostConnection(contextName);
 
@@ -30,8 +32,9 @@ export function OpenCostSettingsPanel({ contextName }: { contextName: string }) 
   const isPrometheus = metricsSource === "prometheus" || metricsSource === "mimir";
   const canSave =
     (metricsSource === "opencost" && (url || settings?.url)) ||
-    (isPrometheus && (prometheusUrl || settings?.prometheusUrl));
-  const canTest = settings?.url || settings?.prometheusUrl;
+    (metricsSource === "mimir") ||
+    (metricsSource === "prometheus" && (prometheusUrl || settings?.prometheusUrl));
+  const canTest = settings?.url || settings?.prometheusUrl || settings?.grafanaConfigured;
 
   return (
     <Card>
@@ -98,20 +101,39 @@ export function OpenCostSettingsPanel({ contextName }: { contextName: string }) 
           </>
         )}
 
-        {/* Prometheus / Mimir fields */}
-        {isPrometheus && (
+        {/* Mimir — reuse Grafana/Mimir configuration */}
+        {metricsSource === "mimir" && (
+          <div className="rounded-md border p-3 space-y-1.5">
+            <div className="flex items-center gap-2 text-sm">
+              {settings?.grafanaConfigured || grafanaConfig?.hasToken ? (
+                <CircleCheck className="h-4 w-4 text-green-500 shrink-0" />
+              ) : (
+                <CircleX className="h-4 w-4 text-red-500 shrink-0" />
+              )}
+              <span className="font-medium">
+                {settings?.grafanaConfigured || grafanaConfig?.hasToken
+                  ? "Grafana / Mimir is configured"
+                  : "Grafana / Mimir is not configured"}
+              </span>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              OpenCost will query <span className="font-mono">opencost_*</span> metrics through
+              the Grafana datasource proxy using your Grafana / Mimir plugin settings.
+              {!settings?.grafanaConfigured && !grafanaConfig?.hasToken && (
+                <> Configure the <strong>Grafana / Mimir</strong> plugin first.</>
+              )}
+            </p>
+          </div>
+        )}
+
+        {/* Prometheus fields */}
+        {metricsSource === "prometheus" && (
           <>
             <div>
-              <label className="text-sm font-medium mb-1 block">
-                {metricsSource === "mimir" ? "Mimir" : "Prometheus"} URL
-              </label>
+              <label className="text-sm font-medium mb-1 block">Prometheus URL</label>
               <Input
                 type="url"
-                placeholder={
-                  metricsSource === "mimir"
-                    ? "https://mimir.example.com"
-                    : "http://prometheus.monitoring.svc:9090"
-                }
+                placeholder="http://prometheus.monitoring.svc:9090"
                 value={prometheusUrl}
                 onChange={(e) => setPrometheusUrl(e.target.value)}
               />
@@ -124,7 +146,7 @@ export function OpenCostSettingsPanel({ contextName }: { contextName: string }) 
               <label className="text-sm font-medium mb-1 block">Bearer Token (optional)</label>
               <Input
                 type="password"
-                placeholder="Token for Prometheus/Mimir authentication"
+                placeholder="Token for Prometheus authentication"
                 value={prometheusToken}
                 onChange={(e) => setPrometheusToken(e.target.value)}
               />
