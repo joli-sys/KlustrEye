@@ -95,7 +95,11 @@ pub async fn test_connection(
             if prom_url.is_empty() {
                 return Ok(Json(json!({ "ok": false, "error": "Prometheus/Mimir URL not configured" })));
             }
-            let url = format!("{}/api/v1/query?query=opencost_node_total_hourly_cost", prom_url.trim_end_matches('/'));
+            let url = format!(
+                "{}/api/v1/query?query={}",
+                prom_url.trim_end_matches('/'),
+                urlencoding::encode("count(node_total_hourly_cost)")
+            );
             let result = make_request(&url, config.prometheus_token.as_deref()).await;
             match result {
                 Ok(body) => {
@@ -185,6 +189,71 @@ pub async fn get_assets(
             let body = make_request(&url, config.token.as_deref()).await
                 .map_err(|e| AppError::Internal(e.to_string()))?;
             Ok(Json(body))
+        }
+    }
+}
+
+// --- Summary (for cluster overview) ---
+
+pub async fn get_summary(
+    Path(context_name): Path<String>,
+    State(state): State<AppState>,
+) -> Result<Json<Value>> {
+    let config = load_config(&context_name, &state).await?;
+
+    match config.metrics_source.as_str() {
+        "prometheus" | "mimir" => {
+            let prom_url = config.prometheus_url.as_deref().unwrap_or("");
+            if prom_url.is_empty() {
+                return Ok(Json(json!({ "hourly": null, "monthly": null })));
+            }
+            let url = format!(
+                "{}/api/v1/query?query={}",
+                prom_url.trim_end_matches('/'),
+                urlencoding::encode("sum(node_total_hourly_cost)")
+            );
+            match make_request(&url, config.prometheus_token.as_deref()).await {
+                Ok(body) => {
+                    let hourly = body
+                        .get("data").and_then(|d| d.get("result"))
+                        .and_then(|r| r.as_array()).and_then(|a| a.first())
+                        .and_then(|v| v.get("value")).and_then(|v| v.as_array())
+                        .and_then(|v| v.get(1)).and_then(|v| v.as_str())
+                        .and_then(|s| s.parse::<f64>().ok());
+                    Ok(Json(json!({
+                        "hourly": hourly,
+                        "monthly": hourly.map(|h| h * 730.0),
+                    })))
+                }
+                Err(_) => Ok(Json(json!({ "hourly": null, "monthly": null }))),
+            }
+        }
+        _ => {
+            let oc_url = config.url.as_deref().unwrap_or("");
+            if oc_url.is_empty() {
+                return Ok(Json(json!({ "hourly": null, "monthly": null })));
+            }
+            let url = format!(
+                "{}/model/allocation?window=1h&aggregate=cluster&accumulate=false",
+                oc_url.trim_end_matches('/')
+            );
+            match make_request(&url, config.token.as_deref()).await {
+                Ok(body) => {
+                    let allocs = body.get("data")
+                        .and_then(|d| d.as_array()).and_then(|a| a.first())
+                        .and_then(|v| v.as_object());
+                    let hourly = allocs.map(|map| {
+                        map.values()
+                            .filter_map(|v| v.get("totalCost").and_then(|c| c.as_f64()))
+                            .sum::<f64>()
+                    });
+                    Ok(Json(json!({
+                        "hourly": hourly,
+                        "monthly": hourly.map(|h| h * 730.0),
+                    })))
+                }
+                Err(_) => Ok(Json(json!({ "hourly": null, "monthly": null }))),
+            }
         }
     }
 }
@@ -308,52 +377,15 @@ async fn get_allocation_from_prometheus(
         return Err(AppError::BadRequest("Prometheus/Mimir URL not configured".into()));
     }
 
-    // Build PromQL queries for cost metrics based on aggregate
-    let (cpu_query, ram_query, total_query) = match aggregate {
-        "pod" => {
-            let ns_filter = namespace.map(|ns| format!(", namespace=\"{}\"", ns)).unwrap_or_default();
-            (
-                format!("sum by (pod, namespace) (opencost_pod_cpu_cost{{{}}})", ns_filter.trim_start_matches(", ")),
-                format!("sum by (pod, namespace) (opencost_pod_ram_cost{{{}}})", ns_filter.trim_start_matches(", ")),
-                format!("sum by (pod, namespace) (opencost_pod_total_cost{{{}}})", ns_filter.trim_start_matches(", ")),
-            )
-        }
-        "node" => (
-            "sum by (node) (opencost_node_cpu_hourly_cost)".to_string(),
-            "sum by (node) (opencost_node_ram_hourly_cost)".to_string(),
-            "sum by (node) (opencost_node_total_hourly_cost)".to_string(),
-        ),
-        _ => {
-            // namespace
-            let ns_filter = namespace.map(|ns| format!("namespace=\"{}\"", ns)).unwrap_or_default();
-            let filter = if ns_filter.is_empty() { String::new() } else { format!("{{{}}}", ns_filter) };
-            (
-                format!("sum by (namespace) (opencost_pod_cpu_cost{})", filter),
-                format!("sum by (namespace) (opencost_pod_ram_cost{})", filter),
-                format!("sum by (namespace) (opencost_pod_total_cost{})", filter),
-            )
-        }
-    };
-
-    // Convert window to seconds for Prometheus range
-    let duration_secs = window_to_seconds(window);
-    let step = if duration_secs <= 3600 { "60" } else { "300" };
-
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
-    let start = now - duration_secs;
+    let hours = window_to_hours(window);
+    let (cpu_query, ram_query, total_query) = build_allocation_queries(aggregate, window, hours, namespace);
 
     let mut results = serde_json::Map::new();
     for (key, query) in [("cpu", &cpu_query), ("ram", &ram_query), ("total", &total_query)] {
         let url = format!(
-            "{}/api/v1/query_range?query={}&start={}&end={}&step={}",
+            "{}/api/v1/query?query={}",
             prom_url.trim_end_matches('/'),
-            urlencoding::encode(query),
-            start,
-            now,
-            step
+            urlencoding::encode(query)
         );
         match make_request(&url, config.prometheus_token.as_deref()).await {
             Ok(body) => { results.insert(key.to_string(), body); }
@@ -364,33 +396,97 @@ async fn get_allocation_from_prometheus(
     Ok(Json(Value::Object(results)))
 }
 
+fn build_allocation_queries(
+    aggregate: &str,
+    window: &str,
+    hours: f64,
+    namespace: Option<&str>,
+) -> (String, String, String) {
+    match aggregate {
+        "pod" => {
+            let selector = if let Some(ns) = namespace {
+                format!(r#"pod!="", namespace="{}""#, ns)
+            } else {
+                r#"pod!="", namespace!=""#.to_string()
+            };
+            (
+                format!(
+                    r#"sum by (namespace, pod) (avg_over_time(container_cpu_allocation{{{selector}}}[{window}]) * on(instance) group_left() avg_over_time(node_cpu_hourly_cost[{window}])) * {hours}"#
+                ),
+                format!(
+                    r#"sum by (namespace, pod) (avg_over_time(container_memory_allocation_bytes{{{selector}}}[{window}]) / (1024*1024*1024) * on(instance) group_left() avg_over_time(node_ram_hourly_cost[{window}])) * {hours}"#
+                ),
+                format!(
+                    r#"sum by (namespace, pod) (avg_over_time(container_cpu_allocation{{{selector}}}[{window}]) * on(instance) group_left() avg_over_time(node_cpu_hourly_cost[{window}]) + avg_over_time(container_memory_allocation_bytes{{{selector}}}[{window}]) / (1024*1024*1024) * on(instance) group_left() avg_over_time(node_ram_hourly_cost[{window}])) * {hours}"#
+                ),
+            )
+        }
+        "node" => (
+            format!(
+                r#"sum by (node) (avg_over_time(kube_node_status_capacity{{resource="cpu", unit="core"}}[{window}]) * on(node) group_left() avg_over_time(node_cpu_hourly_cost[{window}])) * {hours}"#
+            ),
+            format!(
+                r#"sum by (node) (avg_over_time(kube_node_status_capacity{{resource="memory", unit="byte"}}[{window}]) / (1024*1024*1024) * on(node) group_left() avg_over_time(node_ram_hourly_cost[{window}])) * {hours}"#
+            ),
+            format!(
+                r#"sum by (node) (avg_over_time(node_total_hourly_cost[{window}])) * {hours}"#
+            ),
+        ),
+        _ => {
+            // namespace
+            let base = if let Some(ns) = namespace {
+                format!(r#"namespace!="", namespace="{}""#, ns)
+            } else {
+                r#"namespace!=""#.to_string()
+            };
+            (
+                format!(
+                    r#"sum by (namespace) (avg_over_time(container_cpu_allocation{{{base}}}[{window}]) * on(instance) group_left() avg_over_time(node_cpu_hourly_cost[{window}])) * {hours}"#
+                ),
+                format!(
+                    r#"sum by (namespace) (avg_over_time(container_memory_allocation_bytes{{{base}}}[{window}]) / (1024*1024*1024) * on(instance) group_left() avg_over_time(node_ram_hourly_cost[{window}])) * {hours}"#
+                ),
+                format!(
+                    r#"sum by (namespace) (avg_over_time(container_cpu_allocation{{{base}}}[{window}]) * on(instance) group_left() avg_over_time(node_cpu_hourly_cost[{window}]) + avg_over_time(container_memory_allocation_bytes{{{base}}}[{window}]) / (1024*1024*1024) * on(instance) group_left() avg_over_time(node_ram_hourly_cost[{window}])) * {hours}"#
+                ),
+            )
+        }
+    }
+}
+
 async fn get_assets_from_prometheus(config: &OpenCostConfig, window: &str) -> Result<Json<Value>> {
     let prom_url = config.prometheus_url.as_deref().unwrap_or("");
     if prom_url.is_empty() {
         return Err(AppError::BadRequest("Prometheus/Mimir URL not configured".into()));
     }
 
-    let query = "sum by (node) (opencost_node_total_hourly_cost)";
-    let url = format!(
-        "{}/api/v1/query?query={}",
-        prom_url.trim_end_matches('/'),
-        urlencoding::encode(query)
-    );
+    let hours = window_to_hours(window);
+    let (cpu_query, ram_query, total_query) = build_allocation_queries("node", window, hours, None);
 
-    let body = make_request(&url, config.prometheus_token.as_deref()).await
-        .map_err(|e| AppError::Internal(e.to_string()))?;
+    let mut results = serde_json::Map::new();
+    for (key, query) in [("cpu", &cpu_query), ("ram", &ram_query), ("total", &total_query)] {
+        let url = format!(
+            "{}/api/v1/query?query={}",
+            prom_url.trim_end_matches('/'),
+            urlencoding::encode(query)
+        );
+        match make_request(&url, config.prometheus_token.as_deref()).await {
+            Ok(body) => { results.insert(key.to_string(), body); }
+            Err(e) => { results.insert(key.to_string(), json!({ "error": e.to_string() })); }
+        }
+    }
 
-    Ok(Json(json!({ "window": window, "data": body })))
+    Ok(Json(Value::Object(results)))
 }
 
-fn window_to_seconds(window: &str) -> u64 {
+fn window_to_hours(window: &str) -> f64 {
     match window {
-        "1h" => 3600,
-        "6h" => 6 * 3600,
-        "12h" => 12 * 3600,
-        "2d" => 2 * 86400,
-        "7d" => 7 * 86400,
-        "30d" => 30 * 86400,
-        _ => 86400, // 1d default
+        "1h" => 1.0,
+        "6h" => 6.0,
+        "12h" => 12.0,
+        "2d" => 48.0,
+        "7d" => 168.0,
+        "30d" => 720.0,
+        _ => 24.0,
     }
 }

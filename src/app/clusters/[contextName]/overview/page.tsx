@@ -6,9 +6,10 @@ import { useClusterNamespace } from "@/hooks/use-cluster-namespace";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Server, Box, Layers, Network, Cpu, MemoryStick, AlertTriangle, Info, AlertCircle, ChevronDown, ChevronRight } from "lucide-react";
+import { Server, Box, Layers, Network, Cpu, MemoryStick, AlertTriangle, Info, AlertCircle, ChevronDown, ChevronRight, CircleDollarSign } from "lucide-react";
 import { CloudProviderIcon } from "@/components/cloud-provider-icon";
 import { parseCpuValue, parseMemoryValue, formatBytes, formatCpu, formatAge } from "@/lib/utils";
+import { useOpenCostSettings, useClusterCostSummary } from "@/plugins/opencost/hooks";
 import { getResourceHref } from "@/lib/constants";
 import { Link, useParams } from "react-router-dom";
 
@@ -73,6 +74,45 @@ function GaugeCard({ label, icon: Icon, used, total, formatFn, color }: {
         <p className="text-xs text-muted-foreground">
           {formatFn(used)} / {formatFn(total)}
         </p>
+      </CardContent>
+    </Card>
+  );
+}
+
+function formatCost(v: number) {
+  if (v < 0.01) return `$${v.toFixed(4)}`;
+  return `$${v.toFixed(2)}`;
+}
+
+function ClusterCostCard({ contextName }: { contextName: string }) {
+  const { data: settings } = useOpenCostSettings(contextName);
+  const isConfigured =
+    settings &&
+    ((settings.metricsSource === "opencost" && !!settings.url) ||
+      (settings.metricsSource === "prometheus" && !!settings.prometheusUrl) ||
+      (settings.metricsSource === "mimir" && !!settings.grafanaConfigured));
+
+  const { data } = useClusterCostSummary(contextName, !!isConfigured);
+
+  if (!isConfigured || !data?.hourly) return null;
+
+  return (
+    <Card>
+      <CardHeader className="flex flex-row items-center justify-between pb-2">
+        <CardTitle className="text-sm font-medium text-muted-foreground">Cluster Cost</CardTitle>
+        <CircleDollarSign className="h-4 w-4 text-green-500" />
+      </CardHeader>
+      <CardContent className="flex flex-col gap-3 pt-1">
+        <div>
+          <p className="text-xs text-muted-foreground mb-0.5">Hourly rate</p>
+          <p className="text-2xl font-bold tabular-nums">{formatCost(data.hourly)}</p>
+        </div>
+        <div>
+          <p className="text-xs text-muted-foreground mb-0.5">Monthly est.</p>
+          <p className="text-lg font-semibold tabular-nums text-muted-foreground">
+            {formatCost(data.monthly ?? data.hourly * 730)}
+          </p>
+        </div>
       </CardContent>
     </Card>
   );
@@ -204,7 +244,7 @@ export default function OverviewPage() {
       </div>
 
       {clusterResources && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           <GaugeCard
             label="Cluster CPU"
             icon={Cpu}
@@ -221,6 +261,7 @@ export default function OverviewPage() {
             formatFn={formatBytes}
             color="text-purple-400"
           />
+          <ClusterCostCard contextName={ctx} />
         </div>
       )}
 

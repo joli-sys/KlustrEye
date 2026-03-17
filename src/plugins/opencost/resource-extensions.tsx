@@ -13,7 +13,10 @@ function formatCost(v: number) {
 export function OpenCostPodExtension({ contextName, name, namespace }: PluginResourceExtensionProps) {
   const { data: settings } = useOpenCostSettings(contextName);
   const isConfigured =
-    settings && (settings.metricsSource === "opencost" ? !!settings.url : !!settings.prometheusUrl);
+    settings &&
+    ((settings.metricsSource === "opencost" && !!settings.url) ||
+      (settings.metricsSource === "prometheus" && !!settings.prometheusUrl) ||
+      (settings.metricsSource === "mimir" && !!settings.grafanaConfigured));
 
   const { data, isLoading, error } = useAllocation(
     contextName,
@@ -72,7 +75,10 @@ export function OpenCostPodExtension({ contextName, name, namespace }: PluginRes
 export function OpenCostNodeExtension({ contextName, name }: PluginResourceExtensionProps) {
   const { data: settings } = useOpenCostSettings(contextName);
   const isConfigured =
-    settings && (settings.metricsSource === "opencost" ? !!settings.url : !!settings.prometheusUrl);
+    settings &&
+    ((settings.metricsSource === "opencost" && !!settings.url) ||
+      (settings.metricsSource === "prometheus" && !!settings.prometheusUrl) ||
+      (settings.metricsSource === "mimir" && !!settings.grafanaConfigured));
 
   const { data, isLoading, error } = useAllocation(
     contextName,

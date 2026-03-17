@@ -146,6 +146,7 @@ export function OpenCostPage({ contextName }: { contextName: string }) {
   const isConfigured = useMemo(() => {
     if (!settings) return false;
     if (settings.metricsSource === "opencost") return !!settings.url;
+    if (settings.metricsSource === "mimir") return !!settings.grafanaConfigured;
     return !!settings.prometheusUrl;
   }, [settings]);
 
@@ -167,7 +168,7 @@ export function OpenCostPage({ contextName }: { contextName: string }) {
               ? settings.metricsSource === "opencost"
                 ? "OpenCost API"
                 : settings.metricsSource === "mimir"
-                ? "Mimir"
+                ? "Grafana"
                 : "Prometheus"
               : "Not configured"}
           </Badge>

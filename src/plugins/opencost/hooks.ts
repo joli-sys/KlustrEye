@@ -106,6 +106,28 @@ export function useAllocation(
   });
 }
 
+export interface ClusterCostSummary {
+  hourly: number | null;
+  monthly: number | null;
+}
+
+export function useClusterCostSummary(contextName: string, enabled = true) {
+  return useQuery<ClusterCostSummary>({
+    queryKey: ["opencost-summary", contextName],
+    queryFn: async () => {
+      const res = await fetch(
+        `/api/clusters/${encodeURIComponent(contextName)}/plugins/opencost/summary`
+      );
+      if (!res.ok) return { hourly: null, monthly: null };
+      return res.json();
+    },
+    enabled: !!contextName && enabled,
+    staleTime: 60 * 1000,
+    refetchInterval: 60 * 1000,
+    refetchOnWindowFocus: false,
+  });
+}
+
 export function useAssets(contextName: string, window: CostWindow, enabled = true) {
   return useQuery({
     queryKey: ["opencost-assets", contextName, window],

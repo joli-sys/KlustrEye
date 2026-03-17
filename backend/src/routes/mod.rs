@@ -95,6 +95,8 @@ pub fn build_router(state: AppState) -> Router {
             get(opencost::get_allocation))
         .route("/api/clusters/:ctx/plugins/opencost/assets",
             get(opencost::get_assets))
+        .route("/api/clusters/:ctx/plugins/opencost/summary",
+            get(opencost::get_summary))
         // Settings
         .route("/api/settings/kubeconfig",
             get(settings::get_kubeconfig).put(settings::set_kubeconfig))
