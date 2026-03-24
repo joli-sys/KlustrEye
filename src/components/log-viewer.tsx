@@ -1,12 +1,12 @@
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useMemo } from "react";
 import { usePodLogs } from "@/hooks/use-pod-logs";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Download, RefreshCw, Search, ArrowDown, Sparkles } from "lucide-react";
+import { Download, RefreshCw, Search, ArrowDown, Sparkles, Regex } from "lucide-react";
 import { useInlineAiAction } from "@/hooks/use-ai";
 
 interface LogViewerProps {
@@ -23,9 +23,16 @@ export function LogViewer({ contextName, namespace, podName, containers, resourc
   const [follow, setFollow] = useState(false);
   const [tailLines, setTailLines] = useState(200);
   const [search, setSearch] = useState("");
+  const [useRegex, setUseRegex] = useState(false);
   const [previous, setPrevious] = useState(false);
   const logRef = useRef<HTMLPreElement>(null);
   const { triggerAction } = useInlineAiAction();
+
+  const regexError = useMemo(() => {
+    if (!useRegex || !search) return null;
+    try { new RegExp(search, "i"); return null; }
+    catch (e) { return (e as Error).message; }
+  }, [useRegex, search]);
 
   const { logs, isLoading, error, refetch } = usePodLogs({
     contextName,
@@ -43,9 +50,16 @@ export function LogViewer({ contextName, namespace, podName, containers, resourc
     }
   }, [logs, follow]);
 
-  const filteredLines = search
-    ? logs.split("\n").filter((line) => line.toLowerCase().includes(search.toLowerCase()))
-    : logs.split("\n");
+  const filteredLines = useMemo(() => {
+    const lines = logs.split("\n");
+    if (!search) return lines;
+    if (useRegex) {
+      if (regexError) return lines;
+      const re = new RegExp(search, "i");
+      return lines.filter((line) => re.test(line));
+    }
+    return lines.filter((line) => line.toLowerCase().includes(search.toLowerCase()));
+  }, [logs, search, useRegex, regexError]);
 
   const handleDownload = () => {
     const blob = new Blob([logs], { type: "text/plain" });
@@ -79,15 +93,32 @@ export function LogViewer({ contextName, namespace, podName, containers, resourc
           ]}
           className="w-32"
         />
-        <div className="relative flex-1 max-w-xs">
-          <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
-          <Input
-            placeholder="Search logs..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="pl-8"
-          />
+        <div className="relative flex-1 max-w-xs flex items-center gap-1">
+          <div className="relative flex-1">
+            <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
+            <Input
+              placeholder={useRegex ? "Regex pattern..." : "Search logs..."}
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className={`pl-8 ${regexError ? "border-red-500 focus-visible:ring-red-500" : ""}`}
+              title={regexError ?? undefined}
+            />
+          </div>
+          <Button
+            variant={useRegex ? "default" : "outline"}
+            size="icon"
+            onClick={() => setUseRegex(!useRegex)}
+            title={useRegex ? "Regex mode on" : "Enable regex mode"}
+            className="shrink-0 h-8 w-8"
+          >
+            <Regex className="h-3.5 w-3.5" />
+          </Button>
         </div>
+        {search && !regexError && (
+          <span className="text-xs text-muted-foreground shrink-0">
+            {filteredLines.length} match{filteredLines.length !== 1 ? "es" : ""}
+          </span>
+        )}
         <Button
           variant={follow ? "default" : "outline"}
           size="sm"
@@ -146,11 +177,11 @@ export function LogViewer({ contextName, namespace, podName, containers, resourc
           className="bg-black text-green-400 font-mono text-xs p-4 rounded-md overflow-auto max-h-[600px] min-h-[200px] leading-relaxed"
         >
           {filteredLines.map((line, i) => (
-            <div key={i} className="hover:bg-white/5">
+            <div key={i} className={`hover:bg-white/5 ${getLogLevelClass(line)}`}>
               <span className="text-muted-foreground select-none mr-2 inline-block w-8 text-right">
                 {i + 1}
               </span>
-              {search ? highlightSearch(line, search) : line}
+              {search && !regexError ? highlightSearch(line, search, useRegex) : line}
             </div>
           ))}
         </pre>
@@ -159,20 +190,32 @@ export function LogViewer({ contextName, namespace, podName, containers, resourc
   );
 }
 
-function highlightSearch(text: string, search: string) {
+function highlightSearch(text: string, search: string, isRegex: boolean) {
   if (!search) return text;
-  const parts = text.split(new RegExp(`(${search.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")})`, "gi"));
-  return (
-    <>
-      {parts.map((part, i) =>
-        part.toLowerCase() === search.toLowerCase() ? (
-          <mark key={i} className="bg-yellow-600 text-white">
-            {part}
-          </mark>
-        ) : (
-          part
-        )
-      )}
-    </>
-  );
+  try {
+    const pattern = isRegex ? search : search.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const parts = text.split(new RegExp(`(${pattern})`, "gi"));
+    return (
+      <>
+        {parts.map((part, i) =>
+          i % 2 === 1 ? (
+            <mark key={i} className="bg-yellow-600 text-white">
+              {part}
+            </mark>
+          ) : (
+            part
+          )
+        )}
+      </>
+    );
+  } catch {
+    return text;
+  }
+}
+
+function getLogLevelClass(line: string): string {
+  if (/\b(error|err|fatal|critical)\b/i.test(line)) return "text-red-400";
+  if (/\b(warn(?:ing)?)\b/i.test(line)) return "text-yellow-400";
+  if (/\b(debug|trace)\b/i.test(line)) return "text-slate-500";
+  return "";
 }

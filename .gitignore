@@ -60,3 +60,10 @@ prisma/prisma/dev.db-journal
 *.tsbuildinfo
 next-env.d.ts
 docs/superpowers/
+
+# claude code & MCP
+.claude/
+.hive-mind/
+.claude-flow/
+.mcp.json
+.superpowers/

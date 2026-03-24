@@ -60,18 +60,14 @@ pub async fn start_port_forward(
             "--context",
             context_name,
         ])
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
         .spawn()?;
 
     let pid = child.id();
 
-    // Poll for success (wait up to 5s for "Forwarding from" output or process exit)
-    let stdout = child.stdout.take();
-    drop(stdout); // we won't read it in detail, just wait
-
     // Give it a moment to start
-    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
 
     // Check process is still alive
     match child.try_wait() {

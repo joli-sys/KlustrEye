@@ -1,5 +1,5 @@
 import { Handle, Position } from "@xyflow/react";
-import { Globe, Network, Box, Route } from "lucide-react";
+import { Globe, Network, Box, Route, FileText, Lock, HardDrive } from "lucide-react";
 import type { NetworkNodeData } from "./use-network-graph";
 
 function StatusDot({ status }: { status?: string }) {
@@ -117,9 +117,54 @@ export function PodNode({ data }: { data: NetworkNodeData }) {
   );
 }
 
+export function ConfigMapNode({ data }: { data: NetworkNodeData }) {
+  return (
+    <div className="bg-card border rounded-lg px-3 py-2 min-w-[150px] border-l-[3px]" style={{ borderLeftColor: "oklch(0.7 0.18 180)" }}>
+      <Handle type="source" position={Position.Right} className="!bg-teal-400 !w-2 !h-2" />
+      <div className="flex items-center gap-2">
+        <FileText className="h-3.5 w-3.5 text-teal-400 shrink-0" />
+        <span className="text-xs font-medium text-card-foreground truncate max-w-[120px]">{data.label}</span>
+      </div>
+      <div className="text-[10px] text-muted-foreground mt-0.5">{data.namespace}</div>
+    </div>
+  );
+}
+
+export function SecretNode({ data }: { data: NetworkNodeData }) {
+  return (
+    <div className="bg-card border rounded-lg px-3 py-2 min-w-[150px] border-l-[3px]" style={{ borderLeftColor: "oklch(0.65 0.18 30)" }}>
+      <Handle type="source" position={Position.Right} className="!bg-amber-400 !w-2 !h-2" />
+      <div className="flex items-center gap-2">
+        <Lock className="h-3.5 w-3.5 text-amber-400 shrink-0" />
+        <span className="text-xs font-medium text-card-foreground truncate max-w-[120px]">{data.label}</span>
+      </div>
+      <div className="text-[10px] text-muted-foreground mt-0.5">{data.namespace}</div>
+    </div>
+  );
+}
+
+export function PVCNode({ data }: { data: NetworkNodeData }) {
+  return (
+    <div className="bg-card border rounded-lg px-3 py-2 min-w-[150px] border-l-[3px]" style={{ borderLeftColor: "oklch(0.6 0.18 340)" }}>
+      <Handle type="target" position={Position.Left} className="!bg-pink-400 !w-2 !h-2" />
+      <div className="flex items-center gap-2">
+        <HardDrive className="h-3.5 w-3.5 text-pink-400 shrink-0" />
+        <span className="text-xs font-medium text-card-foreground truncate max-w-[120px]">{data.label}</span>
+      </div>
+      {data.storageClass && (
+        <div className="text-[9px] text-muted-foreground truncate">{String(data.storageClass)}</div>
+      )}
+      <div className="text-[10px] text-muted-foreground mt-0.5">{data.namespace}</div>
+    </div>
+  );
+}
+
 export const nodeTypes = {
   ingress: IngressNode,
   ingressroute: IngressRouteNode,
   service: ServiceNode,
   pod: PodNode,
+  configmap: ConfigMapNode,
+  secret: SecretNode,
+  pvc: PVCNode,
 };

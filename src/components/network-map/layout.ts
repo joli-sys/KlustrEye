@@ -6,6 +6,9 @@ const NODE_SIZES: Record<string, { width: number; height: number }> = {
   ingressroute: { width: 220, height: 90 },
   service: { width: 180, height: 70 },
   pod: { width: 160, height: 50 },
+  configmap: { width: 160, height: 50 },
+  secret: { width: 160, height: 50 },
+  pvc: { width: 160, height: 55 },
 };
 
 export function layoutGraph(nodes: Node[], edges: Edge[]): Node[] {

@@ -6,7 +6,7 @@ import { useClusterNamespace } from "@/hooks/use-cluster-namespace";
 
 export interface NetworkNodeData extends Record<string, unknown> {
   label: string;
-  kind: "Ingress" | "IngressRoute" | "Service" | "Pod";
+  kind: "Ingress" | "IngressRoute" | "Service" | "Pod" | "ConfigMap" | "Secret" | "PVC";
   namespace: string;
   status?: string;
   serviceType?: string;
@@ -16,7 +16,10 @@ export interface NetworkNodeData extends Record<string, unknown> {
   hosts?: string[];
   matchRules?: string[];
   entryPoints?: string[];
+  storageClass?: string;
 }
+
+export type ViewMode = "network" | "dependencies";
 
 function useTraefikIngressRoutes(contextName: string, namespace?: string) {
   // Try traefik.io group (modern)
@@ -76,7 +79,7 @@ function parseTraefikHosts(match: string): string[] {
   return hosts;
 }
 
-export function useNetworkGraph(contextName: string) {
+export function useNetworkGraph(contextName: string, viewMode: ViewMode = "network") {
   const selectedNamespace = useClusterNamespace(contextName);
   const ns = selectedNamespace === "__all__" ? undefined : selectedNamespace;
 
@@ -87,6 +90,9 @@ export function useNetworkGraph(contextName: string) {
   const statefulsets = useResources(contextName, "statefulsets", ns);
   const daemonsets = useResources(contextName, "daemonsets", ns);
   const ingressRoutes = useTraefikIngressRoutes(contextName, ns);
+  const configmaps = useResources(contextName, "configmaps", ns);
+  const secrets = useResources(contextName, "secrets", ns);
+  const pvcs = useResources(contextName, "persistentvolumeclaims", ns);
 
   const isLoading =
     services.isLoading ||
@@ -95,7 +101,152 @@ export function useNetworkGraph(contextName: string) {
     deployments.isLoading ||
     statefulsets.isLoading ||
     daemonsets.isLoading ||
-    ingressRoutes.isLoading;
+    ingressRoutes.isLoading ||
+    (viewMode === "dependencies" && (configmaps.isLoading || secrets.isLoading || pvcs.isLoading));
+
+  const depGraph = useMemo(() => {
+    if (viewMode !== "dependencies") return { nodes: [], edges: [] };
+
+    const podItems: K8sResource[] = pods.data ?? [];
+    const cmItems: K8sResource[] = configmaps.data ?? [];
+    const secItems: K8sResource[] = secrets.data ?? [];
+    const pvcItems: K8sResource[] = pvcs.data ?? [];
+
+    const nodes: Node<NetworkNodeData>[] = [];
+    const edges: Edge[] = [];
+
+    // Index configmaps, secrets, pvcs by namespace/name
+    const cmIndex = new Map<string, K8sResource>();
+    for (const cm of cmItems) {
+      cmIndex.set(`${cm.metadata?.namespace}/${cm.metadata?.name}`, cm);
+    }
+    const secIndex = new Map<string, K8sResource>();
+    for (const s of secItems) {
+      // Skip auto-created service account tokens
+      if ((s as K8sResource & { type?: string }).type === "kubernetes.io/service-account-token") continue;
+      secIndex.set(`${s.metadata?.namespace}/${s.metadata?.name}`, s);
+    }
+    const pvcIndex = new Map<string, K8sResource>();
+    for (const p of pvcItems) {
+      pvcIndex.set(`${p.metadata?.namespace}/${p.metadata?.name}`, p);
+    }
+
+    const addedCMs = new Set<string>();
+    const addedSecrets = new Set<string>();
+    const addedPVCs = new Set<string>();
+
+    for (const pod of podItems) {
+      const podName = pod.metadata?.name ?? "";
+      const podNs = pod.metadata?.namespace ?? "";
+      const podId = `pod-${podNs}-${podName}`;
+
+      nodes.push({
+        id: podId,
+        type: "pod",
+        position: { x: 0, y: 0 },
+        data: {
+          label: podName,
+          kind: "Pod",
+          namespace: podNs,
+          status: derivePodStatus(pod),
+          resourceName: podName,
+        },
+      });
+
+      const referencedCMs = new Set<string>();
+      const referencedSecrets = new Set<string>();
+      const referencedPVCs = new Set<string>();
+
+      // Volumes
+      for (const vol of pod.spec?.volumes ?? []) {
+        if (vol.configMap?.name) referencedCMs.add(vol.configMap.name);
+        if (vol.secret?.secretName) referencedSecrets.add(vol.secret.secretName);
+        if (vol.persistentVolumeClaim?.claimName) referencedPVCs.add(vol.persistentVolumeClaim.claimName);
+      }
+      // EnvFrom + Env
+      for (const container of [...(pod.spec?.containers ?? []), ...(pod.spec?.initContainers ?? [])]) {
+        for (const ef of container.envFrom ?? []) {
+          if (ef.configMapRef?.name) referencedCMs.add(ef.configMapRef.name);
+          if (ef.secretRef?.name) referencedSecrets.add(ef.secretRef.name);
+        }
+        for (const env of container.env ?? []) {
+          if (env.valueFrom?.configMapKeyRef?.name) referencedCMs.add(env.valueFrom.configMapKeyRef.name);
+          if (env.valueFrom?.secretKeyRef?.name) referencedSecrets.add(env.valueFrom.secretKeyRef.name);
+        }
+      }
+
+      for (const cmName of referencedCMs) {
+        const key = `${podNs}/${cmName}`;
+        const cmId = `cm-${podNs}-${cmName}`;
+        if (!addedCMs.has(cmId)) {
+          addedCMs.add(cmId);
+          nodes.push({
+            id: cmId,
+            type: "configmap",
+            position: { x: 0, y: 0 },
+            data: { label: cmName, kind: "ConfigMap", namespace: podNs, resourceName: cmName },
+          });
+        }
+        edges.push({
+          id: `${cmId}-${podId}`,
+          source: cmId,
+          target: podId,
+          animated: true,
+          style: { stroke: "oklch(0.7 0.18 180)", strokeDasharray: "5 5" },
+        });
+        cmIndex.delete(key);
+      }
+
+      for (const secName of referencedSecrets) {
+        const secId = `sec-${podNs}-${secName}`;
+        if (!addedSecrets.has(secId)) {
+          addedSecrets.add(secId);
+          nodes.push({
+            id: secId,
+            type: "secret",
+            position: { x: 0, y: 0 },
+            data: { label: secName, kind: "Secret", namespace: podNs, resourceName: secName },
+          });
+        }
+        edges.push({
+          id: `${secId}-${podId}`,
+          source: secId,
+          target: podId,
+          animated: true,
+          style: { stroke: "oklch(0.65 0.18 30)", strokeDasharray: "5 5" },
+        });
+      }
+
+      for (const pvcName of referencedPVCs) {
+        const pvcId = `pvc-${podNs}-${pvcName}`;
+        const pvcResource = pvcIndex.get(`${podNs}/${pvcName}`);
+        if (!addedPVCs.has(pvcId)) {
+          addedPVCs.add(pvcId);
+          nodes.push({
+            id: pvcId,
+            type: "pvc",
+            position: { x: 0, y: 0 },
+            data: {
+              label: pvcName,
+              kind: "PVC",
+              namespace: podNs,
+              resourceName: pvcName,
+              storageClass: pvcResource?.spec?.storageClassName,
+            },
+          });
+        }
+        edges.push({
+          id: `${podId}-${pvcId}`,
+          source: podId,
+          target: pvcId,
+          animated: true,
+          style: { stroke: "oklch(0.6 0.18 340)", strokeDasharray: "5 5" },
+        });
+      }
+    }
+
+    return { nodes, edges };
+  }, [viewMode, pods.data, configmaps.data, secrets.data, pvcs.data]);
 
   const { nodes, edges } = useMemo(() => {
     const svcItems: K8sResource[] = services.data ?? [];
@@ -362,7 +513,8 @@ export function useNetworkGraph(contextName: string) {
     ingressRoutes.data,
   ]);
 
-  return { nodes, edges, isLoading };
+  const result = viewMode === "dependencies" ? depGraph : { nodes, edges };
+  return { nodes: result.nodes, edges: result.edges, isLoading };
 }
 
 function derivePodStatus(pod: K8sResource): string {
