@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -13,12 +13,26 @@ interface ClusterShellTerminalProps {
   contextName: string;
 }
 
+function makeWsUrl(ctx: string): string {
+  if (typeof window === "undefined") return "";
+  const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
+  return `${proto}//${window.location.host}/ws/shell/${encodeURIComponent(ctx)}`;
+}
+
 export function ClusterShellTerminal({ contextName }: ClusterShellTerminalProps) {
   const { shellTerminalOpen, shellTerminalHeight, setShellTerminalOpen, setShellTerminalHeight } =
     useUIStore();
-  const [key, setKey] = useState(0);
   const [maximized, setMaximized] = useState(false);
   const dragRef = useRef<{ startY: number; startHeight: number } | null>(null);
+
+  // Track all visited clusters so we can keep their terminals mounted
+  const [visitedContexts, setVisitedContexts] = useState<string[]>(() => [contextName]);
+  // Per-context reconnect counter — incrementing forces a remount for that context only
+  const [keyByContext, setKeyByContext] = useState<Record<string, number>>({});
+
+  useEffect(() => {
+    setVisitedContexts((prev) => (prev.includes(contextName) ? prev : [...prev, contextName]));
+  }, [contextName]);
 
   const handleMouseDown = useCallback(
     (e: React.MouseEvent) => {
@@ -47,17 +61,15 @@ export function ClusterShellTerminal({ contextName }: ClusterShellTerminalProps)
     [shellTerminalHeight, setShellTerminalHeight]
   );
 
-  if (!shellTerminalOpen) return null;
-
-  const wsUrl =
-    typeof window !== "undefined"
-      ? `${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}/ws/shell/${encodeURIComponent(contextName)}`
-      : "";
-
   const height = maximized ? "70vh" : `${shellTerminalHeight}px`;
 
+  if (typeof window === "undefined") return null;
+
   return (
-    <div className="flex flex-col border-t bg-black" style={{ height, minHeight: 120 }}>
+    <div
+      className={`flex flex-col border-t bg-black${!shellTerminalOpen ? " hidden" : ""}`}
+      style={{ height, minHeight: 120 }}
+    >
       {/* Drag handle */}
       <div
         className="h-1 cursor-row-resize bg-border hover:bg-primary/50 transition-colors shrink-0"
@@ -75,7 +87,9 @@ export function ClusterShellTerminal({ contextName }: ClusterShellTerminalProps)
             variant="ghost"
             size="icon"
             className="h-6 w-6"
-            onClick={() => setKey((k) => k + 1)}
+            onClick={() =>
+              setKeyByContext((prev) => ({ ...prev, [contextName]: (prev[contextName] ?? 0) + 1 }))
+            }
             title="Reconnect"
           >
             <RotateCw className="h-3 w-3" />
@@ -100,18 +114,20 @@ export function ClusterShellTerminal({ contextName }: ClusterShellTerminalProps)
           </Button>
         </div>
       </div>
-      {/* Terminal */}
+      {/* One terminal per visited cluster — only the active one is visible */}
       <div className="flex-1 overflow-hidden">
-        {wsUrl && (
-          <Suspense fallback={<Skeleton className="h-full w-full" />}>
-            <TerminalComponent
-              key={`${contextName}-${key}`}
-              wsUrl={wsUrl}
-              className="h-full"
-              connectMessage=""
-            />
-          </Suspense>
-        )}
+        {visitedContexts.map((ctx) => (
+          <div key={ctx} className={ctx === contextName ? "h-full" : "hidden"}>
+            <Suspense fallback={<Skeleton className="h-full w-full" />}>
+              <TerminalComponent
+                key={`${ctx}-${keyByContext[ctx] ?? 0}`}
+                wsUrl={makeWsUrl(ctx)}
+                className="h-full"
+                connectMessage=""
+              />
+            </Suspense>
+          </div>
+        ))}
       </div>
     </div>
   );

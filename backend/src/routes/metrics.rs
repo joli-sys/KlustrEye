@@ -12,6 +12,15 @@ pub struct MetricsQuery {
     pub namespace: Option<String>,
 }
 
+#[derive(Deserialize)]
+pub struct EventsQuery {
+    pub namespace: Option<String>,
+    #[serde(rename = "involvedObject.kind")]
+    pub involved_object_kind: Option<String>,
+    #[serde(rename = "involvedObject.name")]
+    pub involved_object_name: Option<String>,
+}
+
 pub async fn get_node_metrics(
     Path(context_name): Path<String>,
     State(state): State<AppState>,
@@ -84,7 +93,7 @@ pub async fn list_namespaces(
 
 pub async fn get_events(
     Path(context_name): Path<String>,
-    Query(q): Query<MetricsQuery>,
+    Query(q): Query<EventsQuery>,
     State(state): State<AppState>,
 ) -> Result<Json<Value>> {
     use k8s_openapi::api::core::v1::Event;
@@ -99,7 +108,23 @@ pub async fn get_events(
         Api::all((*client).clone())
     };
 
-    let list = events.list(&ListParams::default()).await
+    let field_selector: Option<String> = {
+        let mut parts = Vec::new();
+        if let Some(kind) = &q.involved_object_kind {
+            parts.push(format!("involvedObject.kind={}", kind));
+        }
+        if let Some(name) = &q.involved_object_name {
+            parts.push(format!("involvedObject.name={}", name));
+        }
+        if parts.is_empty() { None } else { Some(parts.join(",")) }
+    };
+
+    let list_params = match &field_selector {
+        Some(fs) => ListParams::default().fields(fs),
+        None => ListParams::default(),
+    };
+
+    let list = events.list(&list_params).await
         .map_err(|e| AppError::Kubernetes(e.to_string()))?;
 
     Ok(Json(serde_json::to_value(&list)?))
