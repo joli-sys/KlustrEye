@@ -266,6 +266,49 @@ function EnvVarSource({ env, contextName, namespace }: { env: EnvVar; contextNam
   return <span className="text-xs text-muted-foreground">-</span>;
 }
 
+function formatProbeHandler(probe: Record<string, unknown>): string {
+  if (probe.httpGet) {
+    const hg = probe.httpGet as Record<string, unknown>;
+    const scheme = ((hg.scheme as string) || "HTTP").toLowerCase();
+    return `${scheme}:${hg.port as string | number}${(hg.path as string) || "/"}`;
+  }
+  if (probe.exec) {
+    const cmd = ((probe.exec as Record<string, unknown>).command as string[]) || [];
+    return `exec: ${cmd.join(" ")}`;
+  }
+  if (probe.tcpSocket) {
+    return `tcp:${(probe.tcpSocket as Record<string, unknown>).port as string | number}`;
+  }
+  if (probe.grpc) {
+    return `grpc:${(probe.grpc as Record<string, unknown>).port as number}`;
+  }
+  return "unknown";
+}
+
+function ProbeRow({ label, probe }: { label: string; probe: Record<string, unknown> | undefined }) {
+  if (!probe) return null;
+  const delay = probe.initialDelaySeconds as number | undefined;
+  const period = probe.periodSeconds as number | undefined;
+  const timeout = probe.timeoutSeconds as number | undefined;
+  const failure = probe.failureThreshold as number | undefined;
+  const success = probe.successThreshold as number | undefined;
+  return (
+    <div className="space-y-0.5">
+      <div className="flex items-center gap-2">
+        <span className="text-muted-foreground w-20 shrink-0">{label}</span>
+        <span className="font-mono">{formatProbeHandler(probe)}</span>
+      </div>
+      <div className="flex items-center gap-3 pl-20 text-muted-foreground flex-wrap">
+        {delay !== undefined && <span>delay: {delay}s</span>}
+        {period !== undefined && <span>period: {period}s</span>}
+        {timeout !== undefined && <span>timeout: {timeout}s</span>}
+        {failure !== undefined && <span>failure×{failure}</span>}
+        {success !== undefined && <span>success×{success}</span>}
+      </div>
+    </div>
+  );
+}
+
 function EnvVarsCard({
   containers,
   initContainers,
@@ -667,6 +710,9 @@ export default function PodDetailPage() {
                     const isOk = terminated?.exitCode === 0 || !!running;
                     const restarts = (cs?.restartCount as number) || 0;
                     const initVolumeMounts = (container.volumeMounts as Record<string, unknown>[]) || [];
+                    const initLivenessProbe = container.livenessProbe as Record<string, unknown> | undefined;
+                    const initReadinessProbe = container.readinessProbe as Record<string, unknown> | undefined;
+                    const initStartupProbe = container.startupProbe as Record<string, unknown> | undefined;
 
                     return (
                       <div key={cName} className="p-3 rounded-lg border space-y-2">
@@ -719,6 +765,14 @@ export default function PodDetailPage() {
                             ))}
                           </div>
                         )}
+                        {(initLivenessProbe || initReadinessProbe || initStartupProbe) && (
+                          <div className="text-xs space-y-1.5 pt-1 border-t">
+                            <span className="text-muted-foreground font-medium">Probes</span>
+                            <ProbeRow label="Liveness" probe={initLivenessProbe} />
+                            <ProbeRow label="Readiness" probe={initReadinessProbe} />
+                            <ProbeRow label="Startup" probe={initStartupProbe} />
+                          </div>
+                        )}
                       </div>
                     );
                   })}
@@ -740,6 +794,9 @@ export default function PodDetailPage() {
                 const waiting = stateObj?.waiting as Record<string, unknown> | undefined;
                 const lastTerminated = (cs?.lastState as Record<string, unknown>)?.terminated as Record<string, unknown> | undefined;
                 const appVolumeMounts = (container.volumeMounts as Record<string, unknown>[]) || [];
+                const livenessProbe = container.livenessProbe as Record<string, unknown> | undefined;
+                const readinessProbe = container.readinessProbe as Record<string, unknown> | undefined;
+                const startupProbe = container.startupProbe as Record<string, unknown> | undefined;
 
                 return (
                   <div key={cName} className="p-3 rounded-lg border space-y-2">
@@ -805,6 +862,14 @@ export default function PodDetailPage() {
                             {!!vm.subPath && <span className="text-muted-foreground">sub: {vm.subPath as string}</span>}
                           </div>
                         ))}
+                      </div>
+                    )}
+                    {(livenessProbe || readinessProbe || startupProbe) && (
+                      <div className="text-xs space-y-1.5 pt-1 border-t">
+                        <span className="text-muted-foreground font-medium">Probes</span>
+                        <ProbeRow label="Liveness" probe={livenessProbe} />
+                        <ProbeRow label="Readiness" probe={readinessProbe} />
+                        <ProbeRow label="Startup" probe={startupProbe} />
                       </div>
                     )}
                   </div>

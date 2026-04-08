@@ -141,8 +141,8 @@ pub async fn patch_resource(
 ) -> Result<DynamicObject> {
     let info = lookup_resource(kind).ok_or_else(|| anyhow!("Unknown resource kind: {kind}"))?;
     let api = get_api(client, info, namespace.or(Some("default")));
-    let params = PatchParams::apply("klustreye").force();
-    Ok(api.patch(name, &params, &Patch::Merge(patch)).await?)
+    let params = PatchParams::default();
+    Ok(api.patch(name, &params, &Patch::Strategic(patch)).await?)
 }
 
 pub async fn list_custom_resources(
