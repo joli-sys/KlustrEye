@@ -130,6 +130,41 @@ pub async fn get_events(
     Ok(Json(serde_json::to_value(&list)?))
 }
 
+pub async fn get_health_summary(
+    Path(context_name): Path<String>,
+    Query(q): Query<MetricsQuery>,
+    State(state): State<AppState>,
+) -> Result<Json<Value>> {
+    use crate::k8s::{health::summarize_health, resources::list_resources};
+
+    let client = state.clients.get_client(&context_name).await
+        .map_err(|e| AppError::Internal(e.to_string()))?;
+
+    let ns = q.namespace.as_deref();
+    let pods = list_resources((*client).clone(), "pods", ns).await
+        .map_err(|e| AppError::Kubernetes(e.to_string()))?;
+    let deployments = list_resources((*client).clone(), "deployments", ns).await
+        .map_err(|e| AppError::Kubernetes(e.to_string()))?;
+    let events = list_resources((*client).clone(), "events", ns).await
+        .map_err(|e| AppError::Kubernetes(e.to_string()))?;
+
+    let pod_values: Vec<Value> = pods.items.iter()
+        .filter_map(|item| serde_json::to_value(item).ok())
+        .collect();
+    let deployment_values: Vec<Value> = deployments.items.iter()
+        .filter_map(|item| serde_json::to_value(item).ok())
+        .collect();
+    let event_values: Vec<Value> = events.items.iter()
+        .filter_map(|item| serde_json::to_value(item).ok())
+        .collect();
+
+    Ok(Json(serde_json::to_value(summarize_health(
+        &pod_values,
+        &deployment_values,
+        &event_values,
+    ))?))
+}
+
 pub async fn list_crds(
     Path(context_name): Path<String>,
     State(state): State<AppState>,

@@ -1,12 +1,12 @@
 import { useMemo, useState } from "react";
 import { useClusterInfo } from "@/hooks/use-clusters";
 import { useResources } from "@/hooks/use-resources";
-import { useNodeMetrics } from "@/hooks/use-metrics";
+import { useNodeMetrics, useClusterHealth, type ClusterHealthIssue } from "@/hooks/use-metrics";
 import { useClusterNamespace } from "@/hooks/use-cluster-namespace";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Server, Box, Layers, Network, Cpu, MemoryStick, AlertTriangle, Info, AlertCircle, ChevronDown, ChevronRight, CircleDollarSign } from "lucide-react";
+import { Server, Box, Layers, Network, Cpu, MemoryStick, AlertTriangle, Info, AlertCircle, ChevronDown, ChevronRight, CircleDollarSign, CheckCircle2 } from "lucide-react";
 import { CloudProviderIcon } from "@/components/cloud-provider-icon";
 import { parseCpuValue, parseMemoryValue, formatBytes, formatCpu, formatAge } from "@/lib/utils";
 import { useOpenCostSettings, useClusterCostSummary } from "@/plugins/opencost/hooks";
@@ -157,6 +157,90 @@ function ClusterCostCard({ contextName }: { contextName: string }) {
   );
 }
 
+function HealthIssuesCard({
+  contextName,
+  issues,
+  criticalCount,
+  warningCount,
+}: {
+  contextName: string;
+  issues: ClusterHealthIssue[];
+  criticalCount: number;
+  warningCount: number;
+}) {
+  const total = criticalCount + warningCount;
+
+  const issueHref = (issue: ClusterHealthIssue) => {
+    const plural = SINGULAR_TO_PLURAL[issue.kind];
+    if (!plural) return `/clusters/${encodeURIComponent(contextName)}/events`;
+    return getResourceHref(contextName, plural, issue.name, issue.namespace);
+  };
+
+  if (total === 0) {
+    return (
+      <Card className="border-green-500/25 bg-green-500/5">
+        <CardHeader className="flex flex-row items-center justify-between pb-2">
+          <CardTitle className="text-base flex items-center gap-2">
+            <CheckCircle2 className="h-4 w-4 text-green-500" />
+            Cluster Health
+          </CardTitle>
+          <Badge variant="success">Healthy</Badge>
+        </CardHeader>
+        <CardContent className="text-sm text-muted-foreground">
+          No crashlooping pods, unavailable deployments, or warning events detected in the selected namespace.
+        </CardContent>
+      </Card>
+    );
+  }
+
+  return (
+    <Card className={criticalCount > 0 ? "border-destructive/40" : "border-yellow-500/35"}>
+      <CardHeader className="flex flex-row items-center justify-between pb-2">
+        <CardTitle className="text-base flex items-center gap-2">
+          <AlertTriangle className={criticalCount > 0 ? "h-4 w-4 text-destructive" : "h-4 w-4 text-yellow-500"} />
+          Health Issues
+        </CardTitle>
+        <div className="flex items-center gap-2">
+          {criticalCount > 0 && <Badge variant="destructive">{criticalCount} critical</Badge>}
+          {warningCount > 0 && <Badge variant="warning">{warningCount} warning</Badge>}
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-2">
+        {issues.slice(0, 8).map((issue, index) => (
+          <Link
+            key={`${issue.kind}-${issue.namespace ?? "cluster"}-${issue.name}-${issue.reason}-${index}`}
+            to={issueHref(issue)}
+            className="block rounded-md border bg-card/50 p-3 transition-colors hover:border-primary/40"
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge variant={issue.severity === "critical" ? "destructive" : "warning"}>
+                    {issue.reason}
+                  </Badge>
+                  <span className="font-medium text-sm truncate">
+                    {issue.kind}/{issue.name}
+                  </span>
+                  {issue.namespace && (
+                    <span className="text-xs text-muted-foreground">in {issue.namespace}</span>
+                  )}
+                </div>
+                <p className="mt-1 line-clamp-2 text-sm text-muted-foreground">{issue.message}</p>
+              </div>
+              <ChevronRight className="mt-1 h-4 w-4 shrink-0 text-muted-foreground" />
+            </div>
+          </Link>
+        ))}
+        {issues.length > 8 && (
+          <Link to={`/clusters/${encodeURIComponent(contextName)}/events`} className="text-xs text-primary hover:underline">
+            View {issues.length - 8} more related warning events
+          </Link>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function OverviewPage() {
   const { contextName = "" } = useParams();
   const ctx = decodeURIComponent(contextName);
@@ -172,6 +256,7 @@ export default function OverviewPage() {
   const { data: nodes } = useResources(ctx, "nodes");
   const { data: events } = useResources(ctx, "events", ns);
   const { data: metricsData } = useNodeMetrics(ctx);
+  const { data: health } = useClusterHealth(ctx, ns);
 
   const runningPods = (pods || []).filter(
     (p: Record<string, unknown>) => (p.status as Record<string, unknown>)?.phase === "Running"
@@ -286,6 +371,15 @@ export default function OverviewPage() {
 
       {clusterResources && (
         <ClusterUtilizationRow clusterResources={clusterResources} contextName={ctx} />
+      )}
+
+      {health && (
+        <HealthIssuesCard
+          contextName={ctx}
+          issues={health.issues || []}
+          criticalCount={health.criticalCount || 0}
+          warningCount={health.warningCount || 0}
+        />
       )}
 
       {events && events.length > 0 && (() => {

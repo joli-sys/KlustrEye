@@ -53,6 +53,7 @@ pub fn build_router(state: AppState) -> Router {
         // Namespaces, events, CRDs, search, endpoints
         .route("/api/clusters/:ctx/namespaces", get(metrics::list_namespaces))
         .route("/api/clusters/:ctx/events", get(metrics::get_events))
+        .route("/api/clusters/:ctx/health", get(metrics::get_health_summary))
         .route("/api/clusters/:ctx/crds", get(metrics::list_crds))
         .route("/api/clusters/:ctx/search", get(metrics::search_resources))
         .route("/api/clusters/:ctx/services/:name/endpoints", get(metrics::get_service_endpoints))
