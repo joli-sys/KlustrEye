@@ -9,6 +9,7 @@ pub mod organizations;
 pub mod port_forward;
 pub mod resources;
 pub mod settings;
+pub mod workspaces;
 
 use axum::{
     extract::{Path, State, WebSocketUpgrade},
@@ -81,6 +82,15 @@ pub fn build_router(state: AppState) -> Router {
             .put(organizations::update_organization)
             .delete(organizations::delete_organization)
         )
+        // Workspaces
+        .route("/api/workspaces",
+            get(workspaces::list_workspaces).post(workspaces::create_workspace))
+        .route("/api/workspaces/resolve-cluster",
+            post(workspaces::resolve_cluster_workspace))
+        .route("/api/workspaces/:ws_id",
+            get(workspaces::get_workspace)
+                .put(workspaces::update_workspace)
+                .delete(workspaces::delete_workspace))
         // Grafana / Mimir plugin
         .route("/api/clusters/:ctx/plugins/grafana/settings",
             get(grafana::get_settings)
