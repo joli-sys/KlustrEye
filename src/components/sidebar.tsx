@@ -12,6 +12,7 @@ import { useWorkspaceId } from "@/hooks/use-cluster-path";
 import type { Workspace } from "@/hooks/use-workspaces";
 import { KlustrEyeLogo } from "@/components/klustreye-logo";
 import { FileTree } from "@/components/file-tree";
+import { FindInFiles } from "@/components/find-in-files";
 import { ClusterSwitcher } from "@/components/cluster-switcher";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -71,6 +72,7 @@ export function Sidebar({ workspace, contextName, onNavigate, forceExpanded }: {
             <div className="px-3 py-1 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
               Files
             </div>
+            {workspace.folderExists && <FindInFiles wsId={wsId} />}
             {workspace.folderExists ? (
               <FileTree />
             ) : (
