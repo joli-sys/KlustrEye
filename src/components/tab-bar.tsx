@@ -2,12 +2,13 @@
 
 import { useEffect, useRef } from "react";
 import { useLocation, useSearchParams, useNavigate } from "react-router-dom";
-import { useTabStore, type Tab } from "@/lib/stores/tab-store";
+import { useTabStore, modelKeyForTab, type Tab } from "@/lib/stores/tab-store";
 import { SIDEBAR_SECTIONS } from "@/lib/constants";
 import { X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useConfirm } from "@/components/ui/confirm-dialog";
-import { fileModelKey, isDirty, releaseIfClean } from "@/lib/editor/model-registry";
+import { isDirty, releaseIfClean } from "@/lib/editor/model-registry";
+import { workspacePath } from "@/lib/paths";
 
 /** Build a lookup from href suffix → label from sidebar sections */
 const hrefToLabel: Record<string, string> = {};
@@ -41,19 +42,6 @@ function deriveTitleFromPath(pathname: string): string {
   return decodeURIComponent(last)
     .replace(/[-_]/g, " ")
     .replace(/\b\w/g, (c) => c.toUpperCase());
-}
-
-/**
- * The Monaco registry key for a file tab, or `null` for every other kind.
- *
- * Only `file` tabs own a buffer, and only those carry `payload.path`. Built
- * through the same `fileModelKey` the editor uses — a second spelling of the
- * key would silently fail to find the model and leak it.
- */
-function modelKeyForTab(wsId: string, tab: Tab): string | null {
-  if (tab.kind !== "file") return null;
-  const path = tab.payload?.path;
-  return path === undefined ? null : fileModelKey(wsId, path);
 }
 
 export function TabBar({ wsId }: { wsId: string }) {
@@ -105,7 +93,15 @@ export function TabBar({ wsId }: { wsId: string }) {
       const updatedTabs = state.tabsByWorkspace[wsId] || [];
       const newActiveId = state.activeTabIdByWorkspace[wsId];
       const newActive = updatedTabs.find((t) => t.id === newActiveId);
-      if (newActive) navigate(newActive.href);
+      // Closing the LAST tab leaves nothing to navigate to, and staying put
+      // strands the UI: the route is still /w/:wsId/files/<path>, so
+      // FileEditor remains mounted, but its model has just been released and
+      // no dep of the attach effect changed — nothing rebuilds it. The user
+      // gets a blank editor under a live toolbar and a Save that no-ops.
+      // Leaving the route is the only way out, and a live editor with no tab
+      // backing it is incoherent anyway. `/w/:wsId` renders WorkspaceHome via
+      // the index route (App.tsx).
+      navigate(newActive ? newActive.href : workspacePath(wsId));
     }
   };
 

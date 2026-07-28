@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { rewriteClusterHref } from "@/lib/paths";
+import { fileModelKey, isDirty, releaseIfClean } from "@/lib/editor/model-registry";
 
 export type TabKind = "k8s" | "file" | "terminal" | "agent" | "diff";
 
@@ -42,6 +43,40 @@ interface TabState {
 
 const MAX_TABS = 20;
 
+/**
+ * The Monaco registry key for a file tab, or `null` for every other kind.
+ *
+ * Only `file` tabs own a buffer, and only those carry `payload.path`. Built
+ * through the same `fileModelKey` the editor uses — a second spelling of the
+ * key would silently fail to find the model and leak it. Lives here rather
+ * than in `tab-bar` because eviction needs it too, and two copies would drift.
+ */
+export function modelKeyForTab(wsId: string, tab: Tab): string | null {
+  if (tab.kind !== "file") return null;
+  const path = tab.payload?.path;
+  return path === undefined ? null : fileModelKey(wsId, path);
+}
+
+/**
+ * Drop `dirty` from every tab.
+ *
+ * The flag mirrors a Monaco buffer, and buffers do not survive a reload. A
+ * persisted `dirty: true` would paint "Unsaved changes" on a tab whose buffer
+ * no longer exists, and it would never clear: the dot is only recomputed for
+ * the one tab whose editor actually mounts and runs `syncDirty`, so every
+ * other tab keeps a false dot indefinitely.
+ *
+ * Applied on both sides — `partialize` keeps it out of storage from now on,
+ * `migrateTabState` scrubs payloads written before this fix.
+ */
+function stripDirty(byWorkspace: Record<string, Tab[]>): Record<string, Tab[]> {
+  const out: Record<string, Tab[]> = {};
+  for (const [wsId, tabs] of Object.entries(byWorkspace)) {
+    out[wsId] = (tabs ?? []).map(({ dirty: _dirty, ...rest }) => rest);
+  }
+  return out;
+}
+
 export interface MigratedTabState {
   tabsByWorkspace: Record<string, Tab[]>;
   activeTabIdByWorkspace: Record<string, string | null>;
@@ -82,7 +117,7 @@ export function migrateTabState(persisted: unknown): MigratedTabState {
   }
 
   return {
-    tabsByWorkspace: (p.tabsByWorkspace as Record<string, Tab[]>) ?? {},
+    tabsByWorkspace: stripDirty((p.tabsByWorkspace as Record<string, Tab[]>) ?? {}),
     activeTabIdByWorkspace:
       (p.activeTabIdByWorkspace as Record<string, string | null>) ?? {},
     legacyTabsByCluster:
@@ -100,7 +135,11 @@ export const useTabStore = create<TabState>()(
       legacyTabsByCluster: {},
       legacyActiveTabIdByCluster: {},
 
-      openTab: (wsId, href, title, kind = "k8s", payload) =>
+      openTab: (wsId, href, title, kind = "k8s", payload) => {
+        // Freed after the update rather than inside it, so the state updater
+        // stays a pure function of `state`.
+        const evictedKeys: string[] = [];
+
         set((state) => {
           const tabs = [...(state.tabsByWorkspace[wsId] || [])];
           const existing = tabs.find((t) => t.href === href);
@@ -114,12 +153,34 @@ export const useTabStore = create<TabState>()(
           }
           const id = crypto.randomUUID();
           tabs.push({ id, kind, title, href, payload });
-          while (tabs.length > MAX_TABS) tabs.shift();
+
+          // Eviction obeys the same rule as closing a tab: never destroy
+          // unsaved work silently. Take the oldest CLEAN tab, not simply the
+          // oldest, and if every tab is dirty let the count exceed MAX_TABS —
+          // an over-long tab strip is a nuisance, lost edits are not. A tab
+          // with no buffer (any non-file kind) is always evictable.
+          while (tabs.length > MAX_TABS) {
+            const victim = tabs.findIndex((t) => {
+              if (t.id === id) return false; // never the tab just opened
+              const key = modelKeyForTab(wsId, t);
+              return key === null || !isDirty(key);
+            });
+            if (victim === -1) break;
+            const [evicted] = tabs.splice(victim, 1);
+            const key = modelKeyForTab(wsId, evicted);
+            if (key) evictedKeys.push(key);
+          }
+
           return {
             tabsByWorkspace: { ...state.tabsByWorkspace, [wsId]: tabs },
             activeTabIdByWorkspace: { ...state.activeTabIdByWorkspace, [wsId]: id },
           };
-        }),
+        });
+
+        // Without this an evicted tab's model would stay registered with
+        // nothing left pointing at it — a leak for the life of the process.
+        for (const key of evictedKeys) releaseIfClean(key);
+      },
 
       closeTab: (wsId, id) =>
         set((state) => {
@@ -195,7 +256,7 @@ export const useTabStore = create<TabState>()(
       migrate: (persisted) => migrateTabState(persisted),
       merge: (persisted, current) => ({ ...current, ...migrateTabState(persisted) }),
       partialize: (state) => ({
-        tabsByWorkspace: state.tabsByWorkspace,
+        tabsByWorkspace: stripDirty(state.tabsByWorkspace),
         activeTabIdByWorkspace: state.activeTabIdByWorkspace,
         legacyTabsByCluster: state.legacyTabsByCluster,
         legacyActiveTabIdByCluster: state.legacyActiveTabIdByCluster,
