@@ -20,7 +20,7 @@ use axum::{
 };
 
 use crate::{
-    ws::{shell::handle_shell, terminal::handle_terminal},
+    ws::{shell::handle_shell, terminal::handle_terminal, watch::handle_watch},
     AppState,
 };
 
@@ -124,9 +124,10 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/ai/settings",
             put(ai::save_ai_settings).delete(ai::delete_ai_settings))
         .route("/api/ai/chat", post(ai::post_ai_chat))
-        // WebSocket: terminal & shell
+        // WebSocket: terminal, shell & workspace file watching
         .route("/ws/terminal/:ctx/:namespace/:pod/:container", get(ws_terminal_handler))
         .route("/ws/shell/:ctx", get(ws_shell_handler))
+        .route("/ws/watch/:ws_id", get(ws_watch_handler))
         .with_state(state)
 }
 
@@ -161,5 +162,17 @@ async fn ws_shell_handler(
 
     ws.on_upgrade(move |socket| async move {
         handle_shell(socket, state.db.clone(), context_name).await
+    })
+}
+
+async fn ws_watch_handler(
+    ws: WebSocketUpgrade,
+    Path(ws_id): Path<String>,
+    State(state): State<AppState>,
+) -> impl IntoResponse {
+    let ws_id = urlencoding::decode(&ws_id).unwrap_or_default().to_string();
+
+    ws.on_upgrade(move |socket| async move {
+        handle_watch(socket, state.db.clone(), ws_id).await
     })
 }

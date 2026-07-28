@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Outlet, useParams, Navigate } from "react-router-dom";
 import { useWorkspace } from "@/hooks/use-workspaces";
+import { useFileWatch } from "@/hooks/use-file-watch";
 import { useTabStore } from "@/lib/stores/tab-store";
 import { Skeleton } from "@/components/ui/skeleton";
 import { WorkspaceBindingBanner } from "@/components/workspace-binding-banner";
@@ -17,6 +18,10 @@ export function WorkspaceLayout() {
       adoptLegacyTabs(wsId, workspace.contextName);
     }
   }, [wsId, workspace?.contextName, adoptLegacyTabs]);
+
+  // One socket per workspace, and only where there is a folder to watch — a
+  // broken binding would just reconnect against a folder that is not there.
+  useFileWatch(wsId, !!workspace?.folderPath && workspace.folderExists);
 
   if (isLoading) return <Skeleton className="h-32 w-full m-4" />;
   // Unknown workspace: back to home rather than a half-built layout.
