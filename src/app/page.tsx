@@ -5,6 +5,7 @@ import { useKubeconfigSetting, useUpdateKubeconfigPath } from "@/hooks/use-kubec
 import { KlustrEyeLogo } from "@/components/klustreye-logo";
 import { RenameContextDialog } from "@/components/rename-context-dialog";
 import { ManageOrganizationsDialog } from "@/components/manage-organizations-dialog";
+import { WorkspacePicker } from "@/components/workspace-picker";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -173,6 +174,8 @@ export default function HomePage() {
       </header>
 
       <div className="max-w-5xl mx-auto p-4 md:p-8 flex-1">
+        <WorkspacePicker />
+
         <div className="mb-8 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl sm:text-3xl font-bold">Clusters</h1>
