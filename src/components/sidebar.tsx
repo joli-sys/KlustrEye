@@ -11,6 +11,7 @@ import { clusterPath } from "@/lib/paths";
 import { useWorkspaceId } from "@/hooks/use-cluster-path";
 import type { Workspace } from "@/hooks/use-workspaces";
 import { KlustrEyeLogo } from "@/components/klustreye-logo";
+import { FileTree } from "@/components/file-tree";
 import { ClusterSwitcher } from "@/components/cluster-switcher";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -66,11 +67,17 @@ export function Sidebar({ workspace, contextName, onNavigate, forceExpanded }: {
 
       <nav className="flex-1 overflow-y-auto py-2">
         {workspace.folderPath && sidebarOpen && (
-          <div className="px-3 py-2">
-            <div className="text-xs font-medium text-muted-foreground mb-1">Files</div>
-            <p className="text-xs text-muted-foreground">
-              File browsing arrives in P1.
-            </p>
+          <div className="mb-2">
+            <div className="px-3 py-1 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+              Files
+            </div>
+            {workspace.folderExists ? (
+              <FileTree />
+            ) : (
+              <p className="px-3 py-1 text-xs text-muted-foreground">
+                Folder not found.
+              </p>
+            )}
           </div>
         )}
         {workspace.contextName && (
