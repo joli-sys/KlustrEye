@@ -17,6 +17,12 @@ vi.mock("monaco-editor", () => {
         versionId += 1;
       },
       getAlternativeVersionId: () => versionId,
+      // Real models report whether an editor is currently showing them.
+      // Tests flip `__attached` to exercise the releaseIfClean guard.
+      __attached: false,
+      isAttachedToEditor(this: { __attached: boolean }) {
+        return this.__attached;
+      },
       dispose: vi.fn(),
       onDidChangeContent: vi.fn(),
     };
@@ -194,5 +200,42 @@ describe("model-registry", () => {
   it("refuses to store a view state for a buffer that is gone", () => {
     setViewState("/ws/never.txt", VIEW_STATE);
     expect(getViewState("/ws/never.txt")).toBeUndefined();
+  });
+
+  // Disposing an attached model does not throw — Monaco's onWillDispose just
+  // detaches it — so the editor is left mounted and blank with no dep change
+  // to rebuild it, and Save silently no-ops. MAX_TABS eviction can reach an
+  // attached model because the file tree opens tabs without navigating.
+  it("releaseIfClean refuses to free a buffer an editor is showing", () => {
+    const model = getOrCreateModel("/ws/a.txt", "a", "plaintext") as unknown as {
+      __attached: boolean;
+      dispose: { mock: { calls: unknown[] } };
+    };
+    model.__attached = true;
+
+    expect(releaseIfClean("/ws/a.txt")).toBe(false);
+    expect(model.dispose).not.toHaveBeenCalled();
+    // Still registered, so reopening the same path reuses the live buffer.
+    expect(getOrCreateModel("/ws/a.txt", "ignored", "plaintext")).toBe(
+      model as unknown as ReturnType<typeof getOrCreateModel>
+    );
+
+    model.__attached = false;
+    expect(releaseIfClean("/ws/a.txt")).toBe(true);
+    expect(model.dispose).toHaveBeenCalledTimes(1);
+  });
+
+  it("releaseAllClean also spares an attached buffer", () => {
+    const a = getOrCreateModel("/ws/a.txt", "a", "plaintext") as unknown as {
+      __attached: boolean;
+      dispose: { mock: { calls: unknown[] } };
+    };
+    const b = getOrCreateModel("/ws/b.txt", "b", "plaintext");
+    a.__attached = true;
+
+    releaseAllClean();
+
+    expect(a.dispose).not.toHaveBeenCalled();
+    expect(b.dispose).toHaveBeenCalledTimes(1);
   });
 });

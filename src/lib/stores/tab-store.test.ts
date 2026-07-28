@@ -37,6 +37,12 @@ vi.mock("monaco-editor", () => {
         versionId += 1;
       },
       getAlternativeVersionId: () => versionId,
+      // releaseIfClean refuses to dispose a model an editor is showing.
+      // Eviction in these tests operates on unattached buffers.
+      __attached: false,
+      isAttachedToEditor(this: { __attached: boolean }) {
+        return this.__attached;
+      },
       dispose: vi.fn(),
       onDidChangeContent: vi.fn(),
     };

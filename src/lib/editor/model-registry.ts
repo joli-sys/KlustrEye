@@ -87,6 +87,17 @@ export function disposeModel(path: string): void {
  */
 export function releaseIfClean(path: string): boolean {
   if (isDirty(path)) return false;
+
+  // Refuse to free a buffer that an editor is still showing. Monaco's
+  // onWillDispose detaches the model rather than throwing, so disposing an
+  // attached one does not crash — it leaves the editor mounted and blank with
+  // no dep change to rebuild it, and Save silently no-ops. Both the tab-close
+  // path and MAX_TABS eviction can reach an attached model (the file tree
+  // opens tabs without navigating, so the routed file need not be the active
+  // tab), which is why the guard lives here rather than at the call sites.
+  const entry = registry.get(path);
+  if (entry?.model.isAttachedToEditor()) return false;
+
   disposeModel(path);
   return true;
 }
