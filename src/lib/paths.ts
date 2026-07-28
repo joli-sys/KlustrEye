@@ -3,9 +3,9 @@
  * prefix change is a one-file edit.
  *
  * Invariant: a workspace id may never be the literal string "clusters".
- * tab-bar.tsx:22 and resource-table.tsx:104 locate the cluster segment with
- * parts.indexOf("clusters"); a workspace id of "clusters" would match first
- * and silently resolve the wrong contextName.
+ * tab-bar.tsx:22 locates the cluster segment with parts.indexOf("clusters");
+ * a workspace id of "clusters" would match first and silently resolve the
+ * wrong contextName.
  */
 const RESERVED_WORKSPACE_ID = "clusters";
 

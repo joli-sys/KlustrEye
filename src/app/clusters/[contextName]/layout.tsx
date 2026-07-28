@@ -6,6 +6,7 @@ import { ClusterColorProvider } from "@/components/cluster-color-provider";
 import { MobileSidebarDrawer } from "@/components/mobile-sidebar-drawer";
 import { ClusterShellTerminal } from "@/components/cluster-shell-terminal";
 import { AiChatPanel } from "@/components/ai-chat-panel";
+import { CommandPalette } from "@/components/command-palette";
 import { useWorkspaceId } from "@/hooks/use-cluster-path";
 import { useWorkspaceNamespace } from "@/hooks/use-cluster-namespace";
 import { useClusterInfo } from "@/hooks/use-clusters";
@@ -47,6 +48,9 @@ export default function ClusterLayout() {
           <ClusterShellTerminal contextName={decodedContext} />
         </div>
         <AiChatPanel context={aiContext} />
+        {/* Must live inside the route tree: command-palette.tsx reads wsId and
+            contextName from useParams(), which returns {} outside <Routes>. */}
+        <CommandPalette />
       </div>
     </ClusterColorProvider>
   );

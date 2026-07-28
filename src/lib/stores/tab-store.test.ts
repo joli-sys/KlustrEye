@@ -7,11 +7,13 @@ describe("migrateTabState", () => {
       tabsByWorkspace: {},
       activeTabIdByWorkspace: {},
       legacyTabsByCluster: {},
+      legacyActiveTabIdByCluster: {},
     });
     expect(migrateTabState("nonsense")).toEqual({
       tabsByWorkspace: {},
       activeTabIdByWorkspace: {},
       legacyTabsByCluster: {},
+      legacyActiveTabIdByCluster: {},
     });
   });
 
@@ -59,6 +61,56 @@ describe("tab adoption", () => {
     expect(state.tabsByWorkspace.ws1[0].href).toBe("/w/ws1/clusters/prod/workloads/pods");
     expect(state.tabsByWorkspace.ws1[0].kind).toBe("k8s");
     expect(state.legacyTabsByCluster.prod).toBeUndefined();
+  });
+
+  it("carries the active tab id through migration and adoption", async () => {
+    const { migrateTabState, useTabStore } = await import("./tab-store");
+
+    const v0 = {
+      tabsByCluster: {
+        prod: [
+          { id: "1", title: "Pods", href: "/clusters/prod/workloads/pods" },
+          { id: "2", title: "Services", href: "/clusters/prod/network/services" },
+        ],
+      },
+      activeTabIdByCluster: { prod: "1" },
+    };
+
+    const migrated = migrateTabState(v0);
+    expect(migrated.legacyActiveTabIdByCluster.prod).toBe("1");
+
+    useTabStore.setState({
+      tabsByWorkspace: {},
+      activeTabIdByWorkspace: {},
+      legacyTabsByCluster: migrated.legacyTabsByCluster,
+      legacyActiveTabIdByCluster: migrated.legacyActiveTabIdByCluster,
+    });
+
+    useTabStore.getState().adoptLegacyTabs("ws1", "prod");
+    const state = useTabStore.getState();
+
+    // Without this, tab-bar highlights nothing AND updateActiveTab returns
+    // early on `if (!activeId)`, disarming the href self-heal.
+    expect(state.activeTabIdByWorkspace.ws1).toBe("1");
+    expect(state.legacyActiveTabIdByCluster.prod).toBeUndefined();
+  });
+
+  it("falls back to the last adopted tab when the v0 selection is absent", async () => {
+    const { useTabStore } = await import("./tab-store");
+    useTabStore.setState({
+      tabsByWorkspace: {},
+      activeTabIdByWorkspace: {},
+      legacyTabsByCluster: {
+        prod: [
+          { id: "1", title: "Pods", href: "/clusters/prod/workloads/pods" },
+          { id: "2", title: "Services", href: "/clusters/prod/network/services" },
+        ],
+      },
+      legacyActiveTabIdByCluster: {},
+    });
+
+    useTabStore.getState().adoptLegacyTabs("ws1", "prod");
+    expect(useTabStore.getState().activeTabIdByWorkspace.ws1).toBe("2");
   });
 
   it("does not adopt when the workspace already has tabs", async () => {

@@ -25,6 +25,8 @@ interface TabState {
   activeTabIdByWorkspace: Record<string, string | null>;
   /** v0 tabs parked during migration, adopted on first workspace open. */
   legacyTabsByCluster: Record<string, LegacyTab[]>;
+  /** v0 selection parked alongside the tabs; restored by adoptLegacyTabs. */
+  legacyActiveTabIdByCluster: Record<string, string | null>;
   openTab: (
     wsId: string,
     href: string,
@@ -44,6 +46,7 @@ export interface MigratedTabState {
   tabsByWorkspace: Record<string, Tab[]>;
   activeTabIdByWorkspace: Record<string, string | null>;
   legacyTabsByCluster: Record<string, LegacyTab[]>;
+  legacyActiveTabIdByCluster: Record<string, string | null>;
 }
 
 /**
@@ -60,15 +63,21 @@ export function migrateTabState(persisted: unknown): MigratedTabState {
     tabsByWorkspace: {},
     activeTabIdByWorkspace: {},
     legacyTabsByCluster: {},
+    legacyActiveTabIdByCluster: {},
   };
   if (!persisted || typeof persisted !== "object") return empty;
 
   const p = persisted as Record<string, unknown>;
 
   if (p.tabsByCluster && typeof p.tabsByCluster === "object") {
+    // Park the selection too: without it adoptLegacyTabs leaves activeTabId
+    // null, which both un-highlights every tab and short-circuits
+    // updateActiveTab — disarming the href self-heal on first mount.
     return {
       ...empty,
       legacyTabsByCluster: p.tabsByCluster as Record<string, LegacyTab[]>,
+      legacyActiveTabIdByCluster:
+        (p.activeTabIdByCluster as Record<string, string | null>) ?? {},
     };
   }
 
@@ -78,6 +87,8 @@ export function migrateTabState(persisted: unknown): MigratedTabState {
       (p.activeTabIdByWorkspace as Record<string, string | null>) ?? {},
     legacyTabsByCluster:
       (p.legacyTabsByCluster as Record<string, LegacyTab[]>) ?? {},
+    legacyActiveTabIdByCluster:
+      (p.legacyActiveTabIdByCluster as Record<string, string | null>) ?? {},
   };
 }
 
@@ -87,6 +98,7 @@ export const useTabStore = create<TabState>()(
       tabsByWorkspace: {},
       activeTabIdByWorkspace: {},
       legacyTabsByCluster: {},
+      legacyActiveTabIdByCluster: {},
 
       openTab: (wsId, href, title, kind = "k8s", payload) =>
         set((state) => {
@@ -157,10 +169,23 @@ export const useTabStore = create<TabState>()(
 
           const nextLegacy = { ...state.legacyTabsByCluster };
           delete nextLegacy[contextName];
+          const nextLegacyActive = { ...state.legacyActiveTabIdByCluster };
+          delete nextLegacyActive[contextName];
+
+          // Tab ids survive adoption, so the v0 selection maps straight across.
+          const activeId =
+            state.legacyActiveTabIdByCluster?.[contextName] ??
+            adopted[adopted.length - 1]?.id ??
+            null;
 
           return {
             tabsByWorkspace: { ...state.tabsByWorkspace, [wsId]: adopted },
+            activeTabIdByWorkspace: {
+              ...state.activeTabIdByWorkspace,
+              [wsId]: activeId,
+            },
             legacyTabsByCluster: nextLegacy,
+            legacyActiveTabIdByCluster: nextLegacyActive,
           };
         }),
     }),
@@ -173,6 +198,7 @@ export const useTabStore = create<TabState>()(
         tabsByWorkspace: state.tabsByWorkspace,
         activeTabIdByWorkspace: state.activeTabIdByWorkspace,
         legacyTabsByCluster: state.legacyTabsByCluster,
+        legacyActiveTabIdByCluster: state.legacyActiveTabIdByCluster,
       }),
     }
   )

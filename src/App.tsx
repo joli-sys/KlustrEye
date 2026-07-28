@@ -3,7 +3,7 @@ import { Providers } from "@/components/providers";
 import { Footer } from "@/components/footer";
 import { WorkspaceLayout } from "@/components/workspace-layout";
 import { LegacyClusterRedirect } from "@/components/legacy-cluster-redirect";
-import { CommandPalette } from "@/components/command-palette";
+import { WorkspaceHome } from "@/components/workspace-home";
 
 // Pages
 import HomePage from "@/app/page";
@@ -72,6 +72,9 @@ export default function App() {
             <Routes>
               <Route path="/" element={<HomePage />} />
               <Route path="/w/:wsId" element={<WorkspaceLayout />}>
+                {/* Without this index route a folder-only workspace renders a
+                    blank <Outlet />. */}
+                <Route index element={<WorkspaceHome />} />
                 <Route path="clusters/:contextName" element={<ClusterLayout />}>
                 <Route index element={<Navigate to="overview" replace />} />
                 <Route path="overview" element={<OverviewPage />} />
@@ -134,7 +137,8 @@ export default function App() {
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>
           </div>
-          <CommandPalette />
+          {/* CommandPalette renders from inside the route tree (ClusterLayout)
+              so useParams() actually resolves wsId + contextName. */}
           <Footer />
         </div>
       </Providers>

@@ -9,6 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { PortForwardTab } from "@/components/port-forward-tab";
 import { getResourceHref } from "@/lib/constants";
+import { useWorkspaceId } from "@/hooks/use-cluster-path";
 
 interface EndpointAddress {
   ip: string;
@@ -234,9 +235,10 @@ function EndpointTargetRef({
   contextName: string;
   targetRef: EndpointAddress["targetRef"] & {};
 }) {
+  const wsId = useWorkspaceId();
   const kind = TARGET_REF_KIND_MAP[targetRef.kind];
   if (kind) {
-    const href = getResourceHref(contextName, kind, targetRef.name, targetRef.namespace);
+    const href = getResourceHref(wsId, contextName, kind, targetRef.name, targetRef.namespace);
     return (
       <Link to={href}>
         <Badge variant="secondary" className="text-xs hover:bg-accent cursor-pointer">

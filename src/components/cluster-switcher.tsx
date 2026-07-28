@@ -7,6 +7,7 @@ import { useResolveClusterWorkspace } from "@/hooks/use-workspaces";
 import { useWorkspaceId } from "@/hooks/use-cluster-path";
 import { clusterPath } from "@/lib/paths";
 import { RenameContextDialog } from "@/components/rename-context-dialog";
+import { useToast } from "@/components/ui/toast";
 import { cn } from "@/lib/utils";
 import { useUIStore } from "@/lib/stores/ui-store";
 import { COLOR_PRESETS, DEFAULT_COLOR_SCHEME } from "@/lib/color-presets";
@@ -38,6 +39,7 @@ export function ClusterSwitcher({
   const { data: clusters } = useClusters();
   const wsId = useWorkspaceId();
   const resolveWorkspace = useResolveClusterWorkspace();
+  const { addToast } = useToast();
 
   const current = clusters?.find((c) => c.name === contextName);
   const displayLabel = current?.displayName || contextName;
@@ -151,7 +153,7 @@ export function ClusterSwitcher({
           break;
         case "Enter":
           e.preventDefault();
-          if (flatList[highlightedIndex]) switchCluster(flatList[highlightedIndex].name);
+          if (flatList[highlightedIndex]) void switchCluster(flatList[highlightedIndex].name);
           break;
         case "Escape":
           e.preventDefault();
@@ -177,11 +179,21 @@ export function ClusterSwitcher({
    * create) the target cluster's workspace, then re-anchor the sub-path there.
    */
   async function switchCluster(targetName: string) {
-    setOpen(false);
-    const ws = await resolveWorkspace.mutateAsync({ contextName: targetName });
-    const prefix = clusterPath(wsId, contextName, "");
-    const rest = pathname.startsWith(prefix) ? pathname.slice(prefix.length) : "";
-    navigate(`${clusterPath(ws.id, targetName, rest)}${window.location.search}`);
+    try {
+      const ws = await resolveWorkspace.mutateAsync({ contextName: targetName });
+      // Close only once the resolve succeeded: a silently-closing menu is
+      // indistinguishable from a click that never registered.
+      setOpen(false);
+      const prefix = clusterPath(wsId, contextName, "");
+      const rest = pathname.startsWith(prefix) ? pathname.slice(prefix.length) : "";
+      navigate(`${clusterPath(ws.id, targetName, rest)}${window.location.search}`);
+    } catch (err) {
+      addToast({
+        title: "Could not switch cluster",
+        description: (err as Error).message,
+        variant: "destructive",
+      });
+    }
   }
 
   function renderClusterItem(cluster: ClusterContext) {
@@ -198,7 +210,7 @@ export function ClusterSwitcher({
         onMouseEnter={() => setHighlightedIndex(flatIndex)}
       >
         <button
-          onClick={() => switchCluster(cluster.name)}
+          onClick={() => void switchCluster(cluster.name)}
           className="flex items-center gap-2 flex-1 px-3 py-1.5 text-sm min-w-0"
         >
           <Server

@@ -11,7 +11,7 @@ pub async fn init_pool(database_url: &str) -> anyhow::Result<SqlitePool> {
     Ok(pool)
 }
 
-async fn run_migrations(pool: &SqlitePool) -> anyhow::Result<()> {
+pub(crate) async fn run_migrations(pool: &SqlitePool) -> anyhow::Result<()> {
     sqlx::query(
         "CREATE TABLE IF NOT EXISTS organizations (
             id TEXT PRIMARY KEY,

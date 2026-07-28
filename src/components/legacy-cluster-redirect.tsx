@@ -10,7 +10,12 @@ import { Skeleton } from "@/components/ui/skeleton";
  * Preserves the sub-path and query string.
  */
 export function LegacyClusterRedirect() {
-  const { contextName } = useParams<{ contextName: string }>();
+  const params = useParams<{ contextName: string; "*": string }>();
+  const { contextName } = params;
+  // The route's splat, not a String.replace on the pathname: a bookmark whose
+  // context segment is encoded differently (lowercase hex, %2D for -) would
+  // fail to match and leave `rest` equal to the whole pathname.
+  const splat = params["*"];
   const location = useLocation();
   const navigate = useNavigate();
   const resolve = useResolveClusterWorkspace();
@@ -26,10 +31,7 @@ export function LegacyClusterRedirect() {
       .then((ws) => {
         if (cancelled) return;
         adoptLegacyTabs(ws.id, contextName);
-        const rest = location.pathname.replace(
-          `/clusters/${encodeURIComponent(contextName)}`,
-          ""
-        );
+        const rest = splat ? `/${splat}` : "";
         navigate(
           `/w/${encodeURIComponent(ws.id)}/clusters/${encodeURIComponent(contextName)}${rest}${location.search}`,
           { replace: true }

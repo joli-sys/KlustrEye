@@ -9,9 +9,9 @@ use crate::{
     AppState,
 };
 
-/// Workspace ids must never equal "clusters": tab-bar.tsx:22 and
-/// resource-table.tsx:104 locate the cluster segment via
-/// parts.indexOf("clusters"), which would match the workspace id instead.
+/// Workspace ids must never equal "clusters": tab-bar.tsx:22 locates the
+/// cluster segment via parts.indexOf("clusters"), which would match the
+/// workspace id instead.
 const RESERVED_WORKSPACE_IDS: [&str; 1] = ["clusters"];
 
 pub fn validate_workspace_name(name: &str) -> std::result::Result<(), String> {
@@ -212,7 +212,62 @@ pub async fn delete_workspace(
     if res.rows_affected() == 0 {
         return Err(AppError::NotFound(format!("workspace {ws_id} not found")));
     }
+    // 200 with a JSON body, NOT the 204 the spec text says: the client calls
+    // `res.json()` (use-workspaces.ts:96) and a bodyless 204 would throw a
+    // SyntaxError straight into the error-toast path. Change both or neither.
     Ok(Json(json!({ "ok": true })))
+}
+
+/// Insert-if-not-exists, then read back the winner.
+///
+/// A read-then-insert pair races: `<React.StrictMode>` double-mounts
+/// `LegacyClusterRedirect`, and a double-click in `cluster-switcher.tsx` fires
+/// two resolves, so both callers see `None` and both insert. The conditional
+/// INSERT is one statement, so SQLite serializes it. No UNIQUE constraint on
+/// `context_name` — two workspaces per cluster stays deliberately allowed via
+/// `create_workspace`; this only stops *this* endpoint from creating them.
+async fn resolve_or_create_workspace_id(
+    db: &sqlx::SqlitePool,
+    context_name: &str,
+    display_name: Option<&str>,
+) -> Result<String> {
+    let candidate_id = Uuid::new_v4().to_string();
+    let name = display_name
+        .map(str::trim)
+        .filter(|n| !n.is_empty())
+        .unwrap_or(context_name);
+
+    sqlx::query(
+        "INSERT INTO workspaces (id, name, context_name, last_opened_at)
+         SELECT ?, ?, ?, datetime('now')
+         WHERE NOT EXISTS (SELECT 1 FROM workspaces WHERE context_name = ?)",
+    )
+    .bind(&candidate_id)
+    .bind(name)
+    .bind(context_name)
+    .bind(context_name)
+    .execute(db)
+    .await?;
+
+    // Re-read rather than trusting candidate_id: a concurrent request may have
+    // won the insert, and the oldest row is the canonical one.
+    let id: Option<String> = sqlx::query_scalar(
+        "SELECT id FROM workspaces WHERE context_name = ? ORDER BY created_at ASC LIMIT 1",
+    )
+    .bind(context_name)
+    .fetch_optional(db)
+    .await?;
+
+    let id = id.ok_or_else(|| {
+        AppError::Internal(format!("could not resolve workspace for context {context_name}"))
+    })?;
+
+    sqlx::query("UPDATE workspaces SET last_opened_at = datetime('now') WHERE id = ?")
+        .bind(&id)
+        .execute(db)
+        .await?;
+
+    Ok(id)
 }
 
 /// Resolve-or-lazily-create the workspace bound to a cluster context.
@@ -221,35 +276,11 @@ pub async fn resolve_cluster_workspace(
     State(state): State<AppState>,
     Json(body): Json<ResolveClusterBody>,
 ) -> Result<Json<Value>> {
-    let existing: Option<String> = sqlx::query_scalar(
-        "SELECT id FROM workspaces WHERE context_name = ? ORDER BY created_at ASC LIMIT 1",
+    let id = resolve_or_create_workspace_id(
+        &state.db,
+        &body.context_name,
+        body.display_name.as_deref(),
     )
-    .bind(&body.context_name)
-    .fetch_optional(&state.db)
-    .await?;
-
-    if let Some(id) = existing {
-        sqlx::query("UPDATE workspaces SET last_opened_at = datetime('now') WHERE id = ?")
-            .bind(&id)
-            .execute(&state.db)
-            .await?;
-        return get_workspace(Path(id), State(state)).await;
-    }
-
-    let id = Uuid::new_v4().to_string();
-    let name = body
-        .display_name
-        .filter(|n| !n.trim().is_empty())
-        .unwrap_or_else(|| body.context_name.clone());
-
-    sqlx::query(
-        "INSERT INTO workspaces (id, name, context_name, last_opened_at)
-         VALUES (?, ?, ?, datetime('now'))",
-    )
-    .bind(&id)
-    .bind(name.trim())
-    .bind(&body.context_name)
-    .execute(&state.db)
     .await?;
 
     get_workspace(Path(id), State(state)).await
@@ -274,8 +305,8 @@ mod tests {
 
     #[test]
     fn rejects_reserved_workspace_id() {
-        // "clusters" would poison parts.indexOf("clusters") in tab-bar.tsx
-        // and resource-table.tsx, which locate segments by name.
+        // "clusters" would poison parts.indexOf("clusters") in tab-bar.tsx,
+        // which locates the cluster segment by name.
         assert!(validate_workspace_id("clusters").is_err());
         assert!(validate_workspace_id("Clusters").is_err());
     }
@@ -292,5 +323,36 @@ mod tests {
         assert!(!context_exists(&ctxs, "PROD"));
         assert!(!context_exists(&ctxs, "missing"));
         assert!(!context_exists(&[], "prod"));
+    }
+
+    #[tokio::test]
+    async fn resolve_is_idempotent_for_a_repeated_context() {
+        // max_connections(1): every connection to `:memory:` would otherwise
+        // get its own empty database.
+        let db = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        crate::db::run_migrations(&db).await.unwrap();
+
+        let first = resolve_or_create_workspace_id(&db, "prod", None).await.unwrap();
+        let second = resolve_or_create_workspace_id(&db, "prod", Some("Production"))
+            .await
+            .unwrap();
+
+        assert_eq!(first, second, "a repeated resolve must return the same workspace");
+
+        let count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM workspaces WHERE context_name = ?")
+                .bind("prod")
+                .fetch_one(&db)
+                .await
+                .unwrap();
+        assert_eq!(count, 1, "resolve must never insert a duplicate row");
+
+        // A different context still gets its own workspace.
+        let other = resolve_or_create_workspace_id(&db, "staging", None).await.unwrap();
+        assert_ne!(first, other);
     }
 }
