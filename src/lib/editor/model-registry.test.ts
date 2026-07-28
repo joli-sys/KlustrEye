@@ -32,7 +32,17 @@ import {
   isDirty,
   markSaved,
   disposeAll,
+  releaseAllClean,
+  fileModelKey,
+  hasDirtyModels,
+  releaseIfClean,
+  getViewState,
+  setViewState,
 } from "./model-registry";
+
+// Stands in for monaco's opaque ICodeEditorViewState; the registry only ever
+// stores and returns it.
+const VIEW_STATE = { cursorState: [], viewState: {} } as never;
 
 describe("model-registry", () => {
   beforeEach(() => {
@@ -95,5 +105,94 @@ describe("model-registry", () => {
 
     const freshA = getOrCreateModel("/ws/a.txt", "again", "plaintext");
     expect(freshA).not.toBe(a);
+  });
+
+  it("namespaces keys by workspace so two workspaces never share a buffer", () => {
+    const keyA = fileModelKey("ws-a", "src/main.tsx");
+    const keyB = fileModelKey("ws-b", "src/main.tsx");
+    expect(keyA).not.toBe(keyB);
+
+    const a = getOrCreateModel(keyA, "workspace a", "typescript");
+    const b = getOrCreateModel(keyB, "workspace b", "typescript");
+    expect(a).not.toBe(b);
+    expect(a.getValue()).toBe("workspace a");
+    expect(b.getValue()).toBe("workspace b");
+  });
+
+  // The separator must be something no filename can contain, or a crafted
+  // path could collide with another workspace's key.
+  it("separates workspace id from path with a character no path can hold", () => {
+    expect(fileModelKey("ws", "a.txt")).toBe(
+      "ws" + String.fromCharCode(0) + "a.txt"
+    );
+  });
+
+  it("releaseIfClean frees a clean buffer", () => {
+    const model = getOrCreateModel("/ws/a.txt", "original", "plaintext");
+
+    expect(releaseIfClean("/ws/a.txt")).toBe(true);
+    expect(model.dispose).toHaveBeenCalledTimes(1);
+    expect(getOrCreateModel("/ws/a.txt", "reread", "plaintext")).not.toBe(model);
+  });
+
+  // The whole point: closing a tab must never destroy unsaved work. Leaking
+  // the buffer is recoverable by reopening the file; losing it is not.
+  it("releaseIfClean keeps a dirty buffer alive", () => {
+    const model = getOrCreateModel("/ws/a.txt", "original", "plaintext");
+    model.setValue("unsaved edit");
+
+    expect(releaseIfClean("/ws/a.txt")).toBe(false);
+    expect(model.dispose).not.toHaveBeenCalled();
+    expect(getOrCreateModel("/ws/a.txt", "reread", "plaintext")).toBe(model);
+    expect(model.getValue()).toBe("unsaved edit");
+  });
+
+  it("releaseIfClean on an unregistered path reports it as released", () => {
+    expect(releaseIfClean("/ws/never.txt")).toBe(true);
+  });
+
+  // Leaving a workspace is reversible — the same wsId reattaches the same
+  // buffers — so a blanket disposeAll there would destroy recoverable edits.
+  it("releaseAllClean frees clean buffers and keeps dirty ones", () => {
+    const clean = getOrCreateModel("/ws/clean.txt", "a", "plaintext");
+    const dirty = getOrCreateModel("/ws/dirty.txt", "b", "plaintext");
+    dirty.setValue("unsaved edit");
+
+    expect(releaseAllClean()).toBe(1);
+
+    expect(clean.dispose).toHaveBeenCalledTimes(1);
+    expect(dirty.dispose).not.toHaveBeenCalled();
+    expect(getOrCreateModel("/ws/dirty.txt", "reread", "plaintext")).toBe(dirty);
+    expect(getOrCreateModel("/ws/dirty.txt", "reread", "plaintext").getValue()).toBe(
+      "unsaved edit"
+    );
+  });
+
+  it("hasDirtyModels reports across every registered buffer", () => {
+    getOrCreateModel("/ws/a.txt", "a", "plaintext");
+    const b = getOrCreateModel("/ws/b.txt", "b", "plaintext");
+    expect(hasDirtyModels()).toBe(false);
+
+    b.setValue("edited");
+    expect(hasDirtyModels()).toBe(true);
+
+    markSaved("/ws/b.txt");
+    expect(hasDirtyModels()).toBe(false);
+  });
+
+  it("view states are stored per key and evicted with the model", () => {
+    getOrCreateModel("/ws/a.txt", "a", "plaintext");
+    setViewState("/ws/a.txt", VIEW_STATE);
+    expect(getViewState("/ws/a.txt")).toBe(VIEW_STATE);
+
+    disposeModel("/ws/a.txt");
+    expect(getViewState("/ws/a.txt")).toBeUndefined();
+  });
+
+  // Without the registry check the map would accumulate an entry for every
+  // file ever opened, with nothing to evict it.
+  it("refuses to store a view state for a buffer that is gone", () => {
+    setViewState("/ws/never.txt", VIEW_STATE);
+    expect(getViewState("/ws/never.txt")).toBeUndefined();
   });
 });

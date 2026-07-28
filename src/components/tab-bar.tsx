@@ -2,10 +2,12 @@
 
 import { useEffect, useRef } from "react";
 import { useLocation, useSearchParams, useNavigate } from "react-router-dom";
-import { useTabStore } from "@/lib/stores/tab-store";
+import { useTabStore, type Tab } from "@/lib/stores/tab-store";
 import { SIDEBAR_SECTIONS } from "@/lib/constants";
 import { X } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useConfirm } from "@/components/ui/confirm-dialog";
+import { fileModelKey, isDirty, releaseIfClean } from "@/lib/editor/model-registry";
 
 /** Build a lookup from href suffix → label from sidebar sections */
 const hrefToLabel: Record<string, string> = {};
@@ -41,15 +43,71 @@ function deriveTitleFromPath(pathname: string): string {
     .replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
+/**
+ * The Monaco registry key for a file tab, or `null` for every other kind.
+ *
+ * Only `file` tabs own a buffer, and only those carry `payload.path`. Built
+ * through the same `fileModelKey` the editor uses — a second spelling of the
+ * key would silently fail to find the model and leak it.
+ */
+function modelKeyForTab(wsId: string, tab: Tab): string | null {
+  if (tab.kind !== "file") return null;
+  const path = tab.payload?.path;
+  return path === undefined ? null : fileModelKey(wsId, path);
+}
+
 export function TabBar({ wsId }: { wsId: string }) {
   const pathname = useLocation().pathname;
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const scrollRef = useRef<HTMLDivElement>(null);
+  const confirm = useConfirm();
 
   const tabs = useTabStore((s) => s.tabsByWorkspace[wsId]);
   const activeTabId = useTabStore((s) => s.activeTabIdByWorkspace[wsId] ?? null);
   const { updateActiveTab, setActiveTab, closeTab } = useTabStore();
+
+  /**
+   * Closing a tab is the only routine way a buffer stops being reachable, so
+   * it is also the only place that can free one. Two rules, in order:
+   *
+   * 1. Never discard unsaved work silently — a dirty tab asks first.
+   * 2. Never dispose a dirty model even after the user confirms. The buffer
+   *    outlives the tab and reappears when the file is reopened; leaking it is
+   *    recoverable, losing it is not. `releaseIfClean` enforces this.
+   */
+  const handleClose = async (tab: Tab) => {
+    const key = modelKeyForTab(wsId, tab);
+    // The registry is the authority on dirtiness; `tab.dirty` is a mirror
+    // written by the editor and is only as fresh as its last render.
+    const dirty = key ? isDirty(key) : !!tab.dirty;
+
+    if (dirty) {
+      const confirmed = await confirm({
+        title: "Close tab with unsaved changes?",
+        description:
+          `${tab.title} has edits that are not written to disk.\n\n` +
+          "Nothing on disk changes either way, and the buffer is kept in " +
+          "memory until the app closes — reopening the file brings the edits " +
+          "back.",
+        confirmLabel: "Close tab",
+      });
+      if (!confirmed) return;
+    }
+
+    const wasActive = tab.id === activeTabId;
+    closeTab(wsId, tab.id);
+    if (key) releaseIfClean(key);
+
+    if (wasActive) {
+      // Navigate to the now-active tab
+      const state = useTabStore.getState();
+      const updatedTabs = state.tabsByWorkspace[wsId] || [];
+      const newActiveId = state.activeTabIdByWorkspace[wsId];
+      const newActive = updatedTabs.find((t) => t.id === newActiveId);
+      if (newActive) navigate(newActive.href);
+    }
+  };
 
   // Auto-sync: when URL changes, update the active tab's href/title.
   // Only k8s tabs derive their title from the path — file/terminal/agent/diff
@@ -99,20 +157,23 @@ export function TabBar({ wsId }: { wsId: string }) {
             }}
           >
             <span className="truncate">{tab.title}</span>
+            {/* The IDE convention: a dot marks unsaved work and gives way to
+                the close button on hover, so the two never fight for the slot. */}
+            {tab.dirty && (
+              <span
+                className="ml-1 h-1.5 w-1.5 shrink-0 rounded-full bg-primary group-hover:hidden"
+                title="Unsaved changes"
+              />
+            )}
             <button
-              className="ml-1 rounded p-0.5 opacity-0 group-hover:opacity-100 hover:bg-muted transition-opacity"
+              className={cn(
+                "ml-1 rounded p-0.5 hover:bg-muted transition-opacity",
+                tab.dirty ? "hidden group-hover:block" : "opacity-0 group-hover:opacity-100"
+              )}
+              title="Close tab"
               onClick={(e) => {
                 e.stopPropagation();
-                const wasActive = tab.id === activeTabId;
-                closeTab(wsId, tab.id);
-                if (wasActive) {
-                  // Navigate to the now-active tab
-                  const state = useTabStore.getState();
-                  const updatedTabs = state.tabsByWorkspace[wsId] || [];
-                  const newActiveId = state.activeTabIdByWorkspace[wsId];
-                  const newActive = updatedTabs.find((t) => t.id === newActiveId);
-                  if (newActive) navigate(newActive.href);
-                }
+                void handleClose(tab);
               }}
             >
               <X className="h-3 w-3" />

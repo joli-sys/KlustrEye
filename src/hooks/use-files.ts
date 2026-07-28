@@ -66,10 +66,15 @@ export function useDirectory(wsId: string | undefined, path: string | undefined)
   return useQuery<DirectoryListing>({
     queryKey: ["files", wsId, path],
     enabled: !!wsId && path !== undefined,
-    queryFn: async () => {
+    // The file watcher already invalidates this key on every change under the
+    // directory (use-file-watch.ts), so the global 15s poll from providers.tsx
+    // would only re-list every expanded tree node for nothing.
+    refetchInterval: false,
+    queryFn: async ({ signal }) => {
       const params = new URLSearchParams({ path: path! });
       const res = await fetch(
-        `/api/workspaces/${encodeURIComponent(wsId!)}/files?${params}`
+        `/api/workspaces/${encodeURIComponent(wsId!)}/files?${params}`,
+        { signal }
       );
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
@@ -88,10 +93,11 @@ export function useFile(wsId: string | undefined, path: string | undefined) {
     // refetch file content out from under an open editor buffer.
     refetchInterval: false,
     staleTime: Infinity,
-    queryFn: async () => {
+    queryFn: async ({ signal }) => {
       const params = new URLSearchParams({ path: path! });
       const res = await fetch(
-        `/api/workspaces/${encodeURIComponent(wsId!)}/file?${params}`
+        `/api/workspaces/${encodeURIComponent(wsId!)}/file?${params}`,
+        { signal }
       );
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
@@ -105,6 +111,11 @@ export function useFile(wsId: string | undefined, path: string | undefined) {
 export function useSaveFile() {
   const qc = useQueryClient();
   return useMutation({
+    // Deliberately NOT cancellable, unlike the reads above. React Query v5
+    // hands mutations no `signal` (MutationFunctionContext carries only
+    // client/meta/mutationKey), and aborting a PUT mid-flight would be wrong
+    // anyway: the write may already have landed, and the client would never
+    // learn the new mtime it needs as the next save's baseline.
     mutationFn: async ({
       wsId,
       path,
@@ -143,11 +154,18 @@ export function useSearchFiles(
   return useQuery<SearchFilesResult>({
     queryKey: ["file-search", wsId, q],
     enabled: !!wsId && q.length >= 2,
-    queryFn: async () => {
+    // A search is a full walk of the workspace that opens and reads every
+    // non-ignored file. Under the global 15s poll from providers.tsx that walk
+    // would re-run forever, for as long as the search box holds 2+ characters
+    // — sustained disk and CPU load with nobody watching the results.
+    refetchInterval: false,
+    staleTime: 30_000,
+    queryFn: async ({ signal }) => {
       const params = new URLSearchParams({ q });
       if (max !== undefined) params.set("max", String(max));
       const res = await fetch(
-        `/api/workspaces/${encodeURIComponent(wsId!)}/search?${params}`
+        `/api/workspaces/${encodeURIComponent(wsId!)}/search?${params}`,
+        { signal }
       );
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));

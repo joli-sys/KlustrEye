@@ -19,9 +19,12 @@ import { useWorkspaceId } from "@/hooks/use-cluster-path";
 import { FileSaveError, useFile, useSaveFile, type FileContent } from "@/hooks/use-files";
 import {
   disposeModel,
+  fileModelKey,
   getOrCreateModel,
+  getViewState,
   isDirty,
   markSaved,
+  setViewState,
 } from "@/lib/editor/model-registry";
 import { useTabStore } from "@/lib/stores/tab-store";
 
@@ -74,13 +77,6 @@ export function languageForPath(path: string): string {
   if (dot <= 0) return "plaintext";
   return LANGUAGE_BY_EXTENSION[base.slice(dot + 1)] ?? "plaintext";
 }
-
-/**
- * Caret and scroll position per file, so a tab switch restores the view the
- * way an IDE would. `@monaco-editor/react` only manages view state for models
- * it owns via its `path` prop, which we deliberately do not use.
- */
-const viewStates = new Map<string, monaco.editor.ICodeEditorViewState | null>();
 
 /**
  * The tab href is built by whoever opened the tab, while `location.pathname`
@@ -156,12 +152,10 @@ export function FileEditor() {
     path || undefined
   );
 
-  /**
-   * Registry keys are namespaced by workspace: two workspaces can each hold a
-   * `src/main.tsx`, and a bare path would hand one workspace's buffer to the
-   * other.
-   */
-  const modelKey = useMemo(() => `${wsId}\u0000${path}`, [wsId, path]);
+  // Built by `fileModelKey` rather than inline: `tab-bar` derives the same key
+  // from the tab payload when releasing a closed buffer, and two spellings of
+  // it would leak every model instead of freeing it.
+  const modelKey = useMemo(() => fileModelKey(wsId, path), [wsId, path]);
   const language = useMemo(() => languageForPath(path), [path]);
 
   const [dirty, setDirty] = useState(false);
@@ -177,15 +171,20 @@ export function FileEditor() {
   const dataRef = useRef<FileContent | undefined>(undefined);
   dataRef.current = data;
 
+  // ONE effect on purpose — never split this back into "set from data" plus
+  // "clear on modelKey". `useFile` is `staleTime: Infinity`, so returning to an
+  // already-read file is served from cache SYNCHRONOUSLY: `data` and `modelKey`
+  // change in the same render, so both effects would run and the clear — React
+  // flushes passive effects in declaration order — would win. The baseline
+  // would then stay `undefined` forever and `doSave`'s not-ready guard would
+  // block every save of that file for the life of the page.
+  //
+  // A new file still gets a fresh baseline rather than the previous file's
+  // mtime: `data` is `undefined` while its read is in flight, so the write
+  // below clears the ref exactly as the old second effect did.
   useEffect(() => {
-    if (data) baseModifiedMsRef.current = data.modifiedMs;
-  }, [data]);
-
-  // A new file means a new baseline; do not carry the previous file's mtime
-  // into the first save of this one.
-  useEffect(() => {
-    baseModifiedMsRef.current = undefined;
-  }, [modelKey]);
+    baseModifiedMsRef.current = data?.modifiedMs;
+  }, [data, modelKey]);
 
   const syncDirty = useCallback(() => {
     const next = isDirty(modelKey);
@@ -241,7 +240,7 @@ export function FileEditor() {
     const model = getOrCreateModel(key, current.content, language);
     if (editor.getModel() !== model) {
       editor.setModel(model);
-      const saved = viewStates.get(key);
+      const saved = getViewState(key);
       if (saved) editor.restoreViewState(saved);
     }
 
@@ -253,7 +252,7 @@ export function FileEditor() {
       // Leave the model in the registry — it is what keeps the buffer alive
       // until the tab is actually closed.
       const ed = editorRef.current;
-      if (ed) viewStates.set(key, ed.saveViewState());
+      if (ed) setViewState(key, ed.saveViewState());
     };
   }, [editorReady, modelKey, language, hasData, reloadNonce]);
 
@@ -332,7 +331,8 @@ export function FileEditor() {
       // reseeding from disk means dropping the entry first and letting the
       // attach effect rebuild it from the fresh content.
       editorRef.current?.setModel(null);
-      viewStates.delete(modelKey);
+      // disposeModel drops the view state with it — a caret offset into the
+      // old buffer means nothing once the content is replaced from disk.
       disposeModel(modelKey);
       baseModifiedMsRef.current = fresh.data.modifiedMs;
       setReloadNonce((n) => n + 1);

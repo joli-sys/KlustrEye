@@ -10,6 +10,12 @@ use serde_json::json;
 use sqlx::SqlitePool;
 use tokio::sync::mpsc;
 
+// Directory names never reported: a single `npm install` or `cargo build`
+// would otherwise push tens of thousands of frames through the socket for
+// paths no file tree ever shows. Defined in `crate::fs` and shared with search
+// so the two can never disagree about what is invisible.
+use crate::fs::IGNORED_DIRS;
+
 /// Close code for a socket that can never work for this workspace (no folder
 /// bound, folder unreadable, watcher unavailable). The client must NOT retry
 /// these — a reconnect loop would just re-fail forever. Anything below 4000 is
@@ -26,11 +32,6 @@ const DEBOUNCE: Duration = Duration::from_millis(300);
 /// created at the start of a window is still "new" when that window flushes,
 /// narrow enough that editing a file a second later reads as a modification.
 const CREATED_WINDOW: Duration = Duration::from_secs(1);
-
-/// Directory names never reported. A single `npm install` or `cargo build`
-/// would otherwise push tens of thousands of frames through the socket for
-/// paths no file tree ever shows.
-const IGNORED_DIRS: [&str; 3] = [".git", "node_modules", "target"];
 
 pub async fn handle_watch(socket: WebSocket, db: SqlitePool, ws_id: String) {
     if let Err(e) = run_watch(socket, db, &ws_id).await {
@@ -122,10 +123,28 @@ async fn run_watch(socket: WebSocket, db: SqlitePool, ws_id: &str) -> anyhow::Re
                     }
                 }
 
-                let now = SystemTime::now();
-                for rel in std::mem::take(&mut pending) {
-                    let kind = resolve_kind(&root, &rel, now);
-                    let frame = json!({ "kind": kind, "path": rel }).to_string();
+                // ONE spawn_blocking for the whole flush, not one per path.
+                // `resolve_kind` is a synchronous stat, and a `git checkout`
+                // touching 3000 files would otherwise do 3000 blocking
+                // syscalls on a runtime worker — seconds of stall for every
+                // unrelated request the server is handling if the workspace
+                // lives on an SMB/NFS mount.
+                let batch: Vec<String> = std::mem::take(&mut pending).into_iter().collect();
+                let stat_root = root.clone();
+                let resolved = tokio::task::spawn_blocking(move || {
+                    let now = SystemTime::now();
+                    batch
+                        .into_iter()
+                        .map(|rel| {
+                            let kind = resolve_kind(&stat_root, &rel, now);
+                            json!({ "kind": kind, "path": rel }).to_string()
+                        })
+                        .collect::<Vec<String>>()
+                })
+                .await;
+
+                let Ok(frames) = resolved else { break 'session };
+                for frame in frames {
                     if ws_sink.send(Message::Text(frame)).await.is_err() {
                         break 'session;
                     }

@@ -15,11 +15,24 @@ function assertWorkspaceId(wsId: string): void {
   }
 }
 
+/**
+ * Percent-encode each segment, leaving the `/` separators alone.
+ *
+ * A raw file name goes into this path, and `#` or `?` in one would otherwise
+ * start a fragment or query: `notes#1.md` became `/w/x/files/notes#1.md`, the
+ * router saw only `files/notes`, and the editor 404'd on a perfectly ordinary
+ * filename. react-router decodes per segment on the way back in (`decodePath`
+ * splits on `/` and `decodeURIComponent`s each part), so this round-trips.
+ */
+function encodeSegments(subPath: string): string {
+  return subPath.split("/").map(encodeURIComponent).join("/");
+}
+
 export function workspacePath(wsId: string, subPath = ""): string {
   assertWorkspaceId(wsId);
   const base = `/w/${encodeURIComponent(wsId)}`;
   const sub = subPath.replace(/^\//, "");
-  return sub ? `${base}/${sub}` : base;
+  return sub ? `${base}/${encodeSegments(sub)}` : base;
 }
 
 export function clusterPath(wsId: string, contextName: string, subPath = ""): string {

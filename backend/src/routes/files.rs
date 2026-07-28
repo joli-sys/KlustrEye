@@ -10,7 +10,7 @@ use serde_json::{json, Value};
 
 use crate::{
     error::{AppError, Result},
-    fs::resolve_in_workspace,
+    fs::{resolve_in_workspace_async, IGNORED_DIRS},
     AppState,
 };
 
@@ -100,7 +100,7 @@ pub async fn list_files(
 ) -> Result<Json<Value>> {
     let root = workspace_root(&state, &ws_id).await?;
     let rel = normalize_rel(&q.path);
-    let dir = resolve_in_workspace(&root, &rel)?;
+    let dir = resolve_in_workspace_async(root, rel.clone()).await?;
 
     let meta = tokio::fs::metadata(&dir)
         .await
@@ -155,7 +155,7 @@ pub async fn read_file(
     if rel.is_empty() {
         return Err(AppError::BadRequest("path is required".into()));
     }
-    let file = resolve_in_workspace(&root, &rel)?;
+    let file = resolve_in_workspace_async(root, rel.clone()).await?;
 
     let meta = tokio::fs::metadata(&file)
         .await
@@ -206,7 +206,7 @@ pub async fn write_file(
     if rel.is_empty() {
         return Err(AppError::BadRequest("path is required".into()));
     }
-    let file = resolve_in_workspace(&root, &rel)?;
+    let file = resolve_in_workspace_async(root, rel.clone()).await?;
 
     let current = tokio::fs::metadata(&file).await.ok();
     if let Some(base) = body.base_modified_ms {
@@ -267,7 +267,7 @@ pub async fn search_files(
     }
     let max = q.max.unwrap_or(DEFAULT_SEARCH_MAX).clamp(1, MAX_SEARCH_MAX);
     // Confinement also applies to the search root, and this canonicalizes it.
-    let root = resolve_in_workspace(&root, "")?;
+    let root = resolve_in_workspace_async(root, String::new()).await?;
 
     // The `ignore` walk is synchronous and reads every candidate file, so it
     // must not run on a runtime worker thread.
@@ -280,7 +280,7 @@ pub async fn search_files(
 }
 
 fn search_blocking(root: &StdPath, needle: &str, max: usize) -> (Vec<Value>, bool) {
-    let needle_lower = needle.to_lowercase();
+    let needle_lower = needle.to_ascii_lowercase();
     let mut out: Vec<Value> = Vec::new();
     let mut truncated = false;
 
@@ -294,6 +294,21 @@ fn search_blocking(root: &StdPath, needle: &str, max: usize) -> (Vec<Value>, boo
         // Without this the crate only applies .gitignore inside a git repo,
         // and a workspace folder is very often not one.
         .require_git(false)
+        // `ignore` only skips node_modules/target when a .gitignore actually
+        // lists them, so a bound folder without one gets its whole
+        // node_modules read on every search. Excluding the same directories
+        // the watcher hides keeps the two consistent and bounds the walk.
+        .filter_entry(|entry| {
+            // Depth 0 is the search root itself — a workspace that happens to
+            // be named `target` must still be searchable.
+            if entry.depth() == 0 || !entry.file_type().is_some_and(|t| t.is_dir()) {
+                return true;
+            }
+            !entry
+                .file_name()
+                .to_str()
+                .is_some_and(|name| IGNORED_DIRS.contains(&name))
+        })
         .build();
 
     'walk: for entry in walker.flatten() {
@@ -319,7 +334,7 @@ fn search_blocking(root: &StdPath, needle: &str, max: usize) -> (Vec<Value>, boo
             .replace('\\', "/");
 
         for (idx, line) in text.lines().enumerate() {
-            let Some(column) = find_case_insensitive(line, needle, &needle_lower) else {
+            let Some(column) = find_case_insensitive(line, &needle_lower) else {
                 continue;
             };
             if out.len() >= max {
@@ -338,19 +353,17 @@ fn search_blocking(root: &StdPath, needle: &str, max: usize) -> (Vec<Value>, boo
     (out, truncated)
 }
 
-/// Byte offset of the first match, case-insensitively when that can be done
-/// without the offset drifting.
+/// Byte offset of the first ASCII-case-insensitive match of
+/// `needle_lower_ascii`, which the caller has already lowercased.
 ///
-/// `to_lowercase` can change a string's byte length for non-ASCII input, so an
-/// offset found in the lowercased line would not address the original line.
-/// For non-ASCII lines this falls back to a case-sensitive search rather than
-/// reporting a column that points at the wrong character.
-fn find_case_insensitive(line: &str, needle: &str, needle_lower: &str) -> Option<usize> {
-    if line.is_ascii() && needle.is_ascii() {
-        line.to_lowercase().find(needle_lower)
-    } else {
-        line.find(needle)
-    }
+/// `to_ascii_lowercase` maps only `A-Z`, so unlike full `to_lowercase` it is
+/// byte-length preserving for ALL input including UTF-8 — byte `i` of the
+/// lowercased line is byte `i` of the original. That is what makes the
+/// returned offset valid against the original line, and it is why there is no
+/// case-sensitive fallback: the old one silently made `todo` miss
+/// `TODO: café`, and made every line case-sensitive for a non-ASCII needle.
+fn find_case_insensitive(line: &str, needle_lower_ascii: &str) -> Option<usize> {
+    line.to_ascii_lowercase().find(needle_lower_ascii)
 }
 
 fn preview(line: &str) -> String {
@@ -390,18 +403,27 @@ mod tests {
 
     #[test]
     fn find_case_insensitive_matches_regardless_of_case() {
-        assert_eq!(find_case_insensitive("Hello World", "world", "world"), Some(6));
-        assert_eq!(find_case_insensitive("Hello World", "WORLD", "world"), Some(6));
-        assert_eq!(find_case_insensitive("Hello World", "nope", "nope"), None);
+        assert_eq!(find_case_insensitive("Hello World", "world"), Some(6));
+        assert_eq!(find_case_insensitive("HELLO WORLD", "world"), Some(6));
+        assert_eq!(find_case_insensitive("Hello World", "nope"), None);
     }
 
+    /// The old implementation fell back to a CASE-SENSITIVE search on any
+    /// non-ASCII line, so `todo` did not find `TODO` here.
     #[test]
-    fn find_case_insensitive_keeps_offsets_valid_on_non_ascii_lines() {
-        // "İ".to_lowercase() is two chars, so a lowercased offset would not
-        // address the original line — the match must stay case-sensitive here.
-        let line = "İstanbul let x";
-        let col = find_case_insensitive(line, "let", "let").unwrap();
-        assert_eq!(&line[col..col + 3], "let");
+    fn find_case_insensitive_still_folds_case_on_non_ascii_lines() {
+        assert_eq!(find_case_insensitive("// TODO: café", "todo"), Some(3));
+    }
+
+    /// `to_ascii_lowercase` is byte-length preserving for all input, so the
+    /// offset it produces addresses the ORIGINAL line — including past a
+    /// multi-byte character, where a full `to_lowercase` would have drifted.
+    #[test]
+    fn find_case_insensitive_offsets_address_the_original_line() {
+        // "İ" is two bytes and lowercases to two CHARS under to_lowercase.
+        let line = "İstanbul LET x";
+        let col = find_case_insensitive(line, "let").unwrap();
+        assert_eq!(&line[col..col + 3], "LET");
     }
 
     #[test]
@@ -429,6 +451,39 @@ mod tests {
         assert_eq!(matches[0]["path"], "hit.txt");
         assert_eq!(matches[0]["line"], 1);
         assert_eq!(matches[0]["column"], 6);
+    }
+
+    /// No `.gitignore` at all, so `ignore` alone would happily read every file
+    /// under node_modules. The explicit filter is what bounds the walk.
+    #[test]
+    fn search_skips_ignored_directories_without_a_gitignore() {
+        let d = tempfile::tempdir().unwrap();
+        fs::create_dir(d.path().join("node_modules")).unwrap();
+        fs::write(d.path().join("node_modules/dep.js"), "NEEDLE\n").unwrap();
+        fs::create_dir(d.path().join("target")).unwrap();
+        fs::write(d.path().join("target/build.log"), "NEEDLE\n").unwrap();
+        fs::write(d.path().join("src.js"), "NEEDLE\n").unwrap();
+
+        let root = d.path().canonicalize().unwrap();
+        let (matches, _) = search_blocking(&root, "needle", 200);
+
+        assert_eq!(matches.len(), 1, "got {matches:?}");
+        assert_eq!(matches[0]["path"], "src.js");
+    }
+
+    /// Only whole directory names are hidden — a source file named `target.rs`
+    /// and a directory named `targets` are ordinary content.
+    #[test]
+    fn search_does_not_skip_names_that_merely_resemble_ignored_dirs() {
+        let d = tempfile::tempdir().unwrap();
+        fs::write(d.path().join("target.rs"), "NEEDLE\n").unwrap();
+        fs::create_dir(d.path().join("targets")).unwrap();
+        fs::write(d.path().join("targets/list.json"), "NEEDLE\n").unwrap();
+
+        let root = d.path().canonicalize().unwrap();
+        let (matches, _) = search_blocking(&root, "needle", 200);
+
+        assert_eq!(matches.len(), 2, "got {matches:?}");
     }
 
     #[test]

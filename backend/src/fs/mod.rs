@@ -2,6 +2,15 @@ use std::path::{Component, Path, PathBuf};
 
 use crate::error::{AppError, Result};
 
+/// Directory names no filesystem feature ever descends into.
+///
+/// Shared by the file watcher (`ws::watch`, which would otherwise push tens of
+/// thousands of frames through the socket for one `npm install`) and by search
+/// (`routes::files`, which would otherwise read every file in `node_modules`
+/// when the bound folder has no `.gitignore` listing it). One constant so the
+/// two can never disagree about what is invisible.
+pub const IGNORED_DIRS: [&str; 3] = [".git", "node_modules", "target"];
+
 /// Resolve a client-supplied RELATIVE path against a workspace root.
 ///
 /// Canonicalizes BOTH sides before comparing, because a symlink inside the
@@ -13,11 +22,36 @@ pub fn resolve_in_workspace(root: &Path, rel: &str) -> Result<PathBuf> {
         .map_err(|_| AppError::BadRequest("workspace folder is not accessible".into()))?;
 
     let rel_path = Path::new(rel);
-    if rel_path.is_absolute() {
-        return Err(AppError::BadRequest("path must be relative".into()));
+
+    // One rule instead of separate `is_absolute` and `..` checks, because
+    // `is_absolute()` is not the question. On Windows a DRIVE-RELATIVE path
+    // like `C:foo` has a Prefix but no RootDir, so it is not "absolute" — yet
+    // `PathBuf::push` documents that a path with a prefix and no root REPLACES
+    // the receiver, so `root.join("C:foo")` discards the workspace root
+    // entirely and resolves against the process CWD on drive C.
+    //
+    // Requiring every component to be `Normal` rejects Prefix, RootDir,
+    // ParentDir and CurDir in a single pass, on both platforms. An empty path
+    // has no components and still resolves to the root itself.
+    if !rel_path.components().all(|c| matches!(c, Component::Normal(_))) {
+        return Err(AppError::BadRequest(
+            "path must be a plain relative path".into(),
+        ));
     }
-    if rel_path.components().any(|c| matches!(c, Component::ParentDir)) {
-        return Err(AppError::BadRequest("path must not contain ..".into()));
+
+    // Windows resolves reserved device names inside ANY directory, so
+    // `workspace/COM1` is the serial port, not a file. `tokio::fs::read` on
+    // `CON` or `COM1` blocks with no timeout and holds a runtime worker
+    // forever; `NUL` silently swallows writes.
+    #[cfg(windows)]
+    if rel_path
+        .components()
+        .filter_map(|c| c.as_os_str().to_str())
+        .any(is_reserved_device_name)
+    {
+        return Err(AppError::BadRequest(
+            "path contains a reserved device name".into(),
+        ));
     }
 
     let joined = root.join(rel_path);
@@ -37,7 +71,54 @@ pub fn resolve_in_workspace(root: &Path, rel: &str) -> Result<PathBuf> {
     if remainder.as_os_str().is_empty() {
         return Ok(canonical_existing);
     }
+    // KNOWN TOCTOU, accepted deliberately: the `remainder` components did not
+    // exist at check time and are not re-validated, so a local process that
+    // replaces one with a symlink between this call and the caller's I/O could
+    // steer a write outside the workspace. The backend has no auth and already
+    // runs with the user's full privileges — anyone able to win this race can
+    // simply write the file themselves — so the guard buys nothing against a
+    // realistic attacker. If it is ever hardened, the shape is `O_NOFOLLOW` on
+    // the final open plus re-canonicalizing the parent after `create_dir_all`.
     Ok(canonical_existing.join(remainder))
+}
+
+/// `resolve_in_workspace` off the async executor.
+///
+/// It does 1..N synchronous `canonicalize`/`symlink_metadata` syscalls, and
+/// every filesystem request goes through it. On a local SSD that is
+/// microseconds and invisible; on an SMB/NFS/sshfs mount or a stalled external
+/// volume a single stat blocks for SECONDS, and doing it on a runtime worker
+/// stalls every unrelated request the server is serving alongside it.
+///
+/// Takes owned arguments because `spawn_blocking` needs a `'static` closure.
+pub async fn resolve_in_workspace_async(root: PathBuf, rel: String) -> Result<PathBuf> {
+    tokio::task::spawn_blocking(move || resolve_in_workspace(&root, &rel))
+        .await
+        .map_err(|e| AppError::Internal(format!("path resolution failed: {e}")))?
+}
+
+/// Windows device names that are magic in every directory.
+const RESERVED_DEVICE_NAMES: [&str; 22] = [
+    "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8",
+    "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+];
+
+/// Whether `name` is a Windows reserved device name.
+///
+/// An extension does not help: `COM1.txt` is still the serial port. Matching
+/// is case-insensitive, and trailing spaces and dots are stripped because
+/// Win32 strips them before resolving the name.
+///
+/// Compiled on every platform — only the enforcement in
+/// `resolve_in_workspace` is `#[cfg(windows)]` — so this stays unit-testable
+/// from a Unix CI host.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn is_reserved_device_name(name: &str) -> bool {
+    let stem = name.split('.').next().unwrap_or(name);
+    let stem = stem.trim_end_matches([' ', '.']);
+    RESERVED_DEVICE_NAMES
+        .iter()
+        .any(|reserved| stem.eq_ignore_ascii_case(reserved))
 }
 
 /// Split `p` into (deepest ancestor that exists, remaining components).
@@ -106,6 +187,50 @@ mod tests {
     fn rejects_absolute_paths() {
         let d = tmp_root();
         assert!(resolve_in_workspace(d.path(), "/etc/passwd").is_err());
+    }
+
+    /// The all-`Component::Normal` rule is stricter than the `is_absolute` +
+    /// `..` pair it replaced: `CurDir` is rejected too, so there is exactly
+    /// one spelling of any given path and no component reaches `join` that
+    /// could re-anchor it.
+    #[test]
+    fn rejects_paths_with_non_normal_components() {
+        let d = tmp_root();
+        assert!(resolve_in_workspace(d.path(), "./sub/a.txt").is_err());
+        assert!(resolve_in_workspace(d.path(), "..").is_err());
+    }
+
+    /// `COM1.txt` is still the serial port on Windows, and so is `com1 `.
+    /// A name that merely CONTAINS a device name is an ordinary file.
+    #[test]
+    fn recognises_windows_reserved_device_names() {
+        for name in ["CON", "com1", "NUL", "LPT9", "COM1.txt", "aux.log", "COM1 "] {
+            assert!(is_reserved_device_name(name), "{name} should be reserved");
+        }
+        for name in ["CONFIG", "COM", "COM10", "console.log", "a.CON", "nulled"] {
+            assert!(!is_reserved_device_name(name), "{name} should be allowed");
+        }
+    }
+
+    /// Drive-relative `C:foo` has a Prefix but no RootDir, so `is_absolute()`
+    /// reported `false` and let it through — and `join` then discarded the
+    /// workspace root entirely.
+    #[cfg(windows)]
+    #[test]
+    fn rejects_windows_drive_relative_paths() {
+        let d = tmp_root();
+        assert!(resolve_in_workspace(d.path(), "C:foo").is_err());
+        assert!(resolve_in_workspace(d.path(), r"C:\Windows\win.ini").is_err());
+    }
+
+    /// A read of `COM1` blocks forever and pins a runtime worker, so it must
+    /// never reach the filesystem layer.
+    #[cfg(windows)]
+    #[test]
+    fn rejects_windows_reserved_device_paths() {
+        let d = tmp_root();
+        assert!(resolve_in_workspace(d.path(), "COM1").is_err());
+        assert!(resolve_in_workspace(d.path(), "sub/con.txt").is_err());
     }
 
     #[test]
