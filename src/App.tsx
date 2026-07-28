@@ -1,9 +1,14 @@
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+// Side-effect import: must run before any <Editor> mounts, otherwise the
+// monaco instance backing the model registry and the one backing the editors
+// diverge. See src/lib/monaco-loader.ts.
+import "@/lib/monaco-loader";
 import { Providers } from "@/components/providers";
 import { Footer } from "@/components/footer";
 import { WorkspaceLayout } from "@/components/workspace-layout";
 import { LegacyClusterRedirect } from "@/components/legacy-cluster-redirect";
 import { WorkspaceHome } from "@/components/workspace-home";
+import { FileEditor } from "@/components/file-editor";
 
 // Pages
 import HomePage from "@/app/page";
@@ -75,6 +80,8 @@ export default function App() {
                 {/* Without this index route a folder-only workspace renders a
                     blank <Outlet />. */}
                 <Route index element={<WorkspaceHome />} />
+                {/* Splat carries the workspace-relative file path. */}
+                <Route path="files/*" element={<FileEditor />} />
                 <Route path="clusters/:contextName" element={<ClusterLayout />}>
                 <Route index element={<Navigate to="overview" replace />} />
                 <Route path="overview" element={<OverviewPage />} />
