@@ -3,14 +3,16 @@
 import { useState, useRef, useEffect, useMemo } from "react";
 import { useNamespaces, useClusters } from "@/hooks/use-clusters";
 import { useUIStore } from "@/lib/stores/ui-store";
+import { useWorkspaceId } from "@/hooks/use-cluster-path";
 import { cn } from "@/lib/utils";
 import { ChevronDown, Check, Search, Layers } from "lucide-react";
 
 export function NamespaceSelector({ contextName }: { contextName: string }) {
   const { data: namespaces } = useNamespaces(contextName);
   const { data: clusters } = useClusters();
-  const ns = useUIStore((s) => s.namespaceByCluster[contextName]);
-  const setClusterNamespace = useUIStore((s) => s.setClusterNamespace);
+  const wsId = useWorkspaceId();
+  const ns = useUIStore((s) => s.namespaceByWorkspace[wsId]);
+  const setWorkspaceNamespace = useUIStore((s) => s.setWorkspaceNamespace);
   const hydrated = useRef(false);
 
   const [open, setOpen] = useState(false);
@@ -26,8 +28,8 @@ export function NamespaceSelector({ contextName }: { contextName: string }) {
     hydrated.current = true;
     const cluster = clusters?.find((c) => c.name === contextName);
     const dbNs = cluster?.lastNamespace ?? "default";
-    setClusterNamespace(contextName, dbNs);
-  }, [ns, clusters, contextName, setClusterNamespace]);
+    setWorkspaceNamespace(wsId, dbNs);
+  }, [ns, clusters, contextName, wsId, setWorkspaceNamespace]);
 
   const selectedNamespace = ns ?? "default";
 
@@ -139,7 +141,7 @@ export function NamespaceSelector({ contextName }: { contextName: string }) {
   }, [open, highlightedIndex]);
 
   function selectNamespace(value: string) {
-    setClusterNamespace(contextName, value);
+    setWorkspaceNamespace(wsId, value);
     setOpen(false);
     // Fire-and-forget save to DB
     fetch(

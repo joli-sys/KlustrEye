@@ -41,23 +41,29 @@ function deriveTitleFromPath(pathname: string): string {
     .replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
-export function TabBar({ contextName }: { contextName: string }) {
+export function TabBar({ wsId }: { wsId: string }) {
   const pathname = useLocation().pathname;
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  const tabs = useTabStore((s) => s.tabsByCluster[contextName]);
-  const activeTabId = useTabStore((s) => s.activeTabIdByCluster[contextName] ?? null);
+  const tabs = useTabStore((s) => s.tabsByWorkspace[wsId]);
+  const activeTabId = useTabStore((s) => s.activeTabIdByWorkspace[wsId] ?? null);
   const { updateActiveTab, setActiveTab, closeTab } = useTabStore();
 
-  // Auto-sync: when URL changes, update the active tab's href/title
+  // Auto-sync: when URL changes, update the active tab's href/title.
+  // Only k8s tabs derive their title from the path — file/terminal/agent/diff
+  // tabs carry their own title and must keep it.
   useEffect(() => {
     const search = searchParams.toString();
     const fullHref = search ? `${pathname}?${search}` : pathname;
-    const title = deriveTitleFromPath(pathname);
-    updateActiveTab(contextName, fullHref, title);
-  }, [pathname, searchParams, contextName, updateActiveTab]);
+    const state = useTabStore.getState();
+    const activeId = state.activeTabIdByWorkspace[wsId];
+    const tab = (state.tabsByWorkspace[wsId] || []).find((t) => t.id === activeId);
+    if (!tab) return;
+    const title = tab.kind === "k8s" ? deriveTitleFromPath(pathname) : tab.title;
+    updateActiveTab(wsId, fullHref, title);
+  }, [pathname, searchParams, wsId, updateActiveTab]);
 
   // Scroll active tab into view
   useEffect(() => {
@@ -88,7 +94,7 @@ export function TabBar({ contextName }: { contextName: string }) {
                 : "border-transparent text-muted-foreground hover:text-foreground hover:bg-muted/20"
             )}
             onClick={() => {
-              setActiveTab(contextName, tab.id);
+              setActiveTab(wsId, tab.id);
               navigate(tab.href);
             }}
           >
@@ -98,12 +104,12 @@ export function TabBar({ contextName }: { contextName: string }) {
               onClick={(e) => {
                 e.stopPropagation();
                 const wasActive = tab.id === activeTabId;
-                closeTab(contextName, tab.id);
+                closeTab(wsId, tab.id);
                 if (wasActive) {
                   // Navigate to the now-active tab
                   const state = useTabStore.getState();
-                  const updatedTabs = state.tabsByCluster[contextName] || [];
-                  const newActiveId = state.activeTabIdByCluster[contextName];
+                  const updatedTabs = state.tabsByWorkspace[wsId] || [];
+                  const newActiveId = state.activeTabIdByWorkspace[wsId];
                   const newActive = updatedTabs.find((t) => t.id === newActiveId);
                   if (newActive) navigate(newActive.href);
                 }

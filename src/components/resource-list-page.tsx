@@ -2,7 +2,8 @@
 
 
 import { useResources, useDeleteResource } from "@/hooks/use-resources";
-import { useClusterNamespace } from "@/hooks/use-cluster-namespace";
+import { useWorkspaceNamespace } from "@/hooks/use-cluster-namespace";
+import { useWorkspaceId } from "@/hooks/use-cluster-path";
 import { ResourceTable, nameColumn, namespaceColumn, ageColumn, statusBadge } from "@/components/resource-table";
 import { Button } from "@/components/ui/button";
 import { RESOURCE_REGISTRY, RESOURCE_ROUTE_MAP, getResourceHref, type ResourceKind } from "@/lib/constants";
@@ -36,14 +37,15 @@ export function ResourceListPage({
 }: ResourceListPageProps) {
   const entry = RESOURCE_REGISTRY[kind];
   const routeEntry = RESOURCE_ROUTE_MAP[kind];
+  const wsId = useWorkspaceId();
   const defaultDetailLinkFn = routeEntry?.hasDetail
     ? (item: Record<string, unknown>) => {
         const metadata = item.metadata as Record<string, unknown>;
-        return getResourceHref(contextName, kind, metadata?.name as string, metadata?.namespace as string | undefined);
+        return getResourceHref(wsId, contextName, kind, metadata?.name as string, metadata?.namespace as string | undefined);
       }
     : undefined;
   const resolvedDetailLinkFn = detailLinkFn ?? defaultDetailLinkFn;
-  const selectedNamespace = useClusterNamespace(contextName);
+  const selectedNamespace = useWorkspaceNamespace(wsId);
   const ns = entry.namespaced ? (selectedNamespace === "__all__" ? undefined : selectedNamespace) : undefined;
   const { data, isLoading, refetch, isFetching } = useResources(contextName, kind, ns);
   const deleteMutation = useDeleteResource(contextName, kind);

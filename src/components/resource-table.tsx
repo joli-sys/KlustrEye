@@ -23,6 +23,7 @@ import { formatAge, cn } from "@/lib/utils";
 import { useSavedSearches } from "@/lib/stores/saved-searches-store";
 import { useTabStore } from "@/lib/stores/tab-store";
 import { useUIStore } from "@/lib/stores/ui-store";
+import { useWorkspaceId } from "@/hooks/use-cluster-path";
 import { Link } from "react-router-dom";
 
 const globalFilterFn: FilterFn<Record<string, unknown>> = (row, _columnId, filterValue) => {
@@ -98,13 +99,8 @@ export function ResourceTable({
   const resourceFilters = useUIStore((s) => s.resourceFilters);
   const setResourceFilter = useUIStore((s) => s.setResourceFilter);
 
-  // Derive cluster context from pathname: /clusters/<contextName>/...
-  const contextName = (() => {
-    const parts = pathname.split("/");
-    const idx = parts.indexOf("clusters");
-    return idx !== -1 && parts[idx + 1] ? decodeURIComponent(parts[idx + 1]) : "";
-  })();
-  const storeKey = contextName && resourceKind ? `${contextName}::${resourceKind}` : null;
+  const wsId = useWorkspaceId();
+  const storeKey = wsId && resourceKind ? `${wsId}::${resourceKind}` : null;
   const [sorting, setSorting] = useState<SortingState>([]);
   const [globalFilter, setGlobalFilter] = useState(() => {
     const urlFilter = searchParams.get("filter");
@@ -380,7 +376,7 @@ export function ResourceTable({
                             e.preventDefault();
                             const href = detailLinkFn(row.original);
                             const name = (row.original.metadata as Record<string, unknown>)?.name as string || "Detail";
-                            openTab(contextName, href, name);
+                            openTab(wsId, href, name);
                           }
                         }}
                         onAuxClick={(e) => {
@@ -388,7 +384,7 @@ export function ResourceTable({
                             e.preventDefault();
                             const href = detailLinkFn(row.original);
                             const name = (row.original.metadata as Record<string, unknown>)?.name as string || "Detail";
-                            openTab(contextName, href, name);
+                            openTab(wsId, href, name);
                           }
                         }}
                       >

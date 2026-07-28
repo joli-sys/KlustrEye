@@ -2,7 +2,8 @@ import { useMemo } from "react";
 import type { Node, Edge } from "@xyflow/react";
 import { useQuery } from "@tanstack/react-query";
 import { useResources } from "@/hooks/use-resources";
-import { useClusterNamespace } from "@/hooks/use-cluster-namespace";
+import { useWorkspaceNamespace } from "@/hooks/use-cluster-namespace";
+import { useWorkspaceId } from "@/hooks/use-cluster-path";
 
 export interface NetworkNodeData extends Record<string, unknown> {
   label: string;
@@ -80,7 +81,8 @@ function parseTraefikHosts(match: string): string[] {
 }
 
 export function useNetworkGraph(contextName: string, viewMode: ViewMode = "network") {
-  const selectedNamespace = useClusterNamespace(contextName);
+  const wsId = useWorkspaceId();
+  const selectedNamespace = useWorkspaceNamespace(wsId);
   const ns = selectedNamespace === "__all__" ? undefined : selectedNamespace;
 
   const services = useResources(contextName, "services", ns);

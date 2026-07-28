@@ -17,6 +17,8 @@ import { RelatedEvents } from "@/components/related-events";
 import { Save, Trash2, ArrowLeft, Sparkles } from "lucide-react";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import { Link } from "react-router-dom";
+import { clusterPath } from "@/lib/paths";
+import { useWorkspaceId } from "@/hooks/use-cluster-path";
 import { RESOURCE_ROUTE_MAP } from "@/lib/constants";
 import { useNavigate, useLocation, useSearchParams } from "react-router-dom";
 import { useInlineAiAction } from "@/hooks/use-ai";
@@ -287,6 +289,7 @@ function OwnerRefRow({
 }) {
   const plural = KIND_TO_PLURAL[owner.kind];
   const route = plural ? RESOURCE_ROUTE_MAP[plural] : null;
+  const wsId = useWorkspaceId();
 
   return (
     <div className="flex justify-between">
@@ -297,7 +300,7 @@ function OwnerRefRow({
         <Badge variant="outline" className="text-[10px] mr-1.5">{owner.kind}</Badge>
         {route?.hasDetail ? (
           <Link
-            to={`/clusters/${encodeURIComponent(contextName)}/${route.path}/${encodeURIComponent(owner.name)}${namespace ? `?ns=${encodeURIComponent(namespace)}` : ""}`}
+            to={`${clusterPath(wsId, contextName, `${route.path}/${encodeURIComponent(owner.name)}`)}${namespace ? `?ns=${encodeURIComponent(namespace)}` : ""}`}
             className="font-mono text-primary hover:underline"
           >
             {owner.name}

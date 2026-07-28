@@ -7,6 +7,8 @@ import { useUIStore } from "@/lib/stores/ui-store";
 import { useTabStore } from "@/lib/stores/tab-store";
 import { useSavedSearches } from "@/lib/stores/saved-searches-store";
 import { SIDEBAR_SECTIONS, RESOURCE_ROUTE_MAP, RESOURCE_REGISTRY, type ResourceKind } from "@/lib/constants";
+import { clusterPath } from "@/lib/paths";
+import { useWorkspaceId } from "@/hooks/use-cluster-path";
 import { KlustrEyeLogo } from "@/components/klustreye-logo";
 import { ClusterSwitcher } from "@/components/cluster-switcher";
 import { Badge } from "@/components/ui/badge";
@@ -32,11 +34,12 @@ const pagePlugins = getPluginsWithPages();
 export function Sidebar({ contextName, onNavigate, forceExpanded }: { contextName: string; onNavigate?: () => void; forceExpanded?: boolean }) {
   const pathname = useLocation().pathname;
   const navigate = useNavigate();
-  const { sidebarOpen: _sidebarOpen, toggleSidebar, setClusterNamespace } = useUIStore();
+  const { sidebarOpen: _sidebarOpen, toggleSidebar, setWorkspaceNamespace } = useUIStore();
   const sidebarOpen = forceExpanded ?? _sidebarOpen;
   const { openTab } = useTabStore();
   const { searches: savedSearches, removeSearch } = useSavedSearches();
-  const basePath = `/clusters/${encodeURIComponent(contextName)}`;
+  const wsId = useWorkspaceId();
+  const basePath = clusterPath(wsId, contextName, "");
 
   return (
     <aside
@@ -80,7 +83,7 @@ export function Sidebar({ contextName, onNavigate, forceExpanded }: { contextNam
                   onClick={(e) => {
                     if (e.ctrlKey || e.metaKey || e.button === 1) {
                       e.preventDefault();
-                      openTab(contextName, href, item.label);
+                      openTab(wsId, href, item.label);
                     } else {
                       onNavigate?.();
                     }
@@ -88,7 +91,7 @@ export function Sidebar({ contextName, onNavigate, forceExpanded }: { contextNam
                   onAuxClick={(e) => {
                     if (e.button === 1) {
                       e.preventDefault();
-                      openTab(contextName, href, item.label);
+                      openTab(wsId, href, item.label);
                     }
                   }}
                   className={cn(
@@ -125,7 +128,7 @@ export function Sidebar({ contextName, onNavigate, forceExpanded }: { contextNam
                   onClick={(e) => {
                     if (e.ctrlKey || e.metaKey || e.button === 1) {
                       e.preventDefault();
-                      openTab(contextName, href, plugin.manifest.name);
+                      openTab(wsId, href, plugin.manifest.name);
                     } else {
                       onNavigate?.();
                     }
@@ -133,7 +136,7 @@ export function Sidebar({ contextName, onNavigate, forceExpanded }: { contextNam
                   onAuxClick={(e) => {
                     if (e.button === 1) {
                       e.preventDefault();
-                      openTab(contextName, href, plugin.manifest.name);
+                      openTab(wsId, href, plugin.manifest.name);
                     }
                   }}
                   className={cn(
@@ -178,7 +181,7 @@ export function Sidebar({ contextName, onNavigate, forceExpanded }: { contextNam
                   className="group flex items-center gap-1 mx-1 rounded-md text-sm text-muted-foreground hover:bg-accent/50 hover:text-foreground transition-colors cursor-pointer"
                   title={tooltip}
                   onClick={() => {
-                    if (s.namespace) setClusterNamespace(contextName, s.namespace);
+                    if (s.namespace) setWorkspaceNamespace(wsId, s.namespace);
                     navigate(href);
                     onNavigate?.();
                   }}

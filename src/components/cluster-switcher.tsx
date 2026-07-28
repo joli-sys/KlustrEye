@@ -3,6 +3,9 @@
 import { useState, useRef, useEffect, useMemo } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useClusters } from "@/hooks/use-clusters";
+import { useResolveClusterWorkspace } from "@/hooks/use-workspaces";
+import { useWorkspaceId } from "@/hooks/use-cluster-path";
+import { clusterPath } from "@/lib/paths";
 import { RenameContextDialog } from "@/components/rename-context-dialog";
 import { cn } from "@/lib/utils";
 import { useUIStore } from "@/lib/stores/ui-store";
@@ -33,6 +36,8 @@ export function ClusterSwitcher({
   const pathname = useLocation().pathname;
   const navigate = useNavigate();
   const { data: clusters } = useClusters();
+  const wsId = useWorkspaceId();
+  const resolveWorkspace = useResolveClusterWorkspace();
 
   const current = clusters?.find((c) => c.name === contextName);
   const displayLabel = current?.displayName || contextName;
@@ -165,15 +170,18 @@ export function ClusterSwitcher({
     el?.scrollIntoView({ block: "nearest" });
   }, [open, highlightedIndex]);
 
-  function switchCluster(targetName: string) {
-    const encoded = encodeURIComponent(targetName);
-    const currentEncoded = encodeURIComponent(contextName);
-    const newPath = pathname.replace(
-      `/clusters/${currentEncoded}`,
-      `/clusters/${encoded}`
-    );
-    navigate(newPath);
+  /**
+   * Each cluster lives in its own workspace, so switching clusters means
+   * switching workspaces too — a plain substring swap of the context segment
+   * would leave the *previous* workspace id in the URL. Resolve (or lazily
+   * create) the target cluster's workspace, then re-anchor the sub-path there.
+   */
+  async function switchCluster(targetName: string) {
     setOpen(false);
+    const ws = await resolveWorkspace.mutateAsync({ contextName: targetName });
+    const prefix = clusterPath(wsId, contextName, "");
+    const rest = pathname.startsWith(prefix) ? pathname.slice(prefix.length) : "";
+    navigate(`${clusterPath(ws.id, targetName, rest)}${window.location.search}`);
   }
 
   function renderClusterItem(cluster: ClusterContext) {
