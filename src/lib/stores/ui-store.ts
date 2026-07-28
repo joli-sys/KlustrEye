@@ -3,7 +3,7 @@ import { persist } from "zustand/middleware";
 
 interface UIState {
   sidebarOpen: boolean;
-  namespaceByCluster: Record<string, string>;
+  namespaceByWorkspace: Record<string, string>;
   commandPaletteOpen: boolean;
   mobileSidebarOpen: boolean;
   resourceFilters: Record<string, string>;
@@ -13,7 +13,7 @@ interface UIState {
   aiPanelOpen: boolean;
   toggleSidebar: () => void;
   setSidebarOpen: (open: boolean) => void;
-  setClusterNamespace: (contextName: string, ns: string) => void;
+  setWorkspaceNamespace: (wsId: string, ns: string) => void;
   setCommandPaletteOpen: (open: boolean) => void;
   setMobileSidebarOpen: (open: boolean) => void;
   setResourceFilter: (key: string, value: string) => void;
@@ -30,7 +30,7 @@ export const useUIStore = create<UIState>()(
   persist(
     (set) => ({
       sidebarOpen: true,
-      namespaceByCluster: {},
+      namespaceByWorkspace: {},
       commandPaletteOpen: false,
       mobileSidebarOpen: false,
       resourceFilters: {},
@@ -40,9 +40,9 @@ export const useUIStore = create<UIState>()(
       aiPanelOpen: false,
       toggleSidebar: () => set((state) => ({ sidebarOpen: !state.sidebarOpen })),
       setSidebarOpen: (open) => set({ sidebarOpen: open }),
-      setClusterNamespace: (contextName, ns) =>
+      setWorkspaceNamespace: (wsId, ns) =>
         set((state) => ({
-          namespaceByCluster: { ...state.namespaceByCluster, [contextName]: ns },
+          namespaceByWorkspace: { ...state.namespaceByWorkspace, [wsId]: ns },
         })),
       setCommandPaletteOpen: (open) => set({ commandPaletteOpen: open }),
       setMobileSidebarOpen: (open) => set({ mobileSidebarOpen: open }),
@@ -65,19 +65,57 @@ export const useUIStore = create<UIState>()(
     }),
     {
       name: "klustreye-ui",
-      version: 2,
-      migrate: (persisted) => ({
-        namespaceByCluster: {},
-        resourceFilters: {},
-        shellTerminalHeight: 300,
-        ...(persisted && typeof persisted === "object" ? persisted : {}),
+      version: 3,
+      migrate: (persisted, version) => migrateUIState(persisted, version),
+      merge: (persisted, current) => ({
+        ...current,
+        ...migrateUIState(persisted, 3),
       }),
-      // aiPanelOpen intentionally excluded — AI panel state resets on app restart (not persisted)
+      // aiPanelOpen intentionally excluded — AI panel state resets on app restart
       partialize: (state) => ({
-        namespaceByCluster: state.namespaceByCluster,
+        namespaceByWorkspace: state.namespaceByWorkspace,
         resourceFilters: state.resourceFilters,
         shellTerminalHeight: state.shellTerminalHeight,
       }),
     }
   )
 );
+
+export interface MigratedUIState {
+  namespaceByWorkspace: Record<string, string>;
+  resourceFilters: Record<string, string>;
+  shellTerminalHeight: number;
+}
+
+/**
+ * v2 -> v3: namespaceByCluster -> namespaceByWorkspace, and resourceFilters
+ * re-keyed from `${contextName}::${kind}` to `${wsId}::${kind}`.
+ *
+ * Both are DROPPED rather than remapped: workspace ids do not exist at
+ * migration time, so any mapping would be a guess. Dropping resets the
+ * namespace to "default" and clears filters — both harmless and correct.
+ *
+ * Shape-driven for the same reason as the tab store (see tab-store.ts).
+ */
+export function migrateUIState(persisted: unknown, _version: number): MigratedUIState {
+  const defaults: MigratedUIState = {
+    namespaceByWorkspace: {},
+    resourceFilters: {},
+    shellTerminalHeight: 300,
+  };
+  if (!persisted || typeof persisted !== "object") return defaults;
+
+  const p = persisted as Record<string, unknown>;
+  const isLegacy = "namespaceByCluster" in p;
+
+  return {
+    namespaceByWorkspace: isLegacy
+      ? {}
+      : ((p.namespaceByWorkspace as Record<string, string>) ?? {}),
+    resourceFilters: isLegacy
+      ? {}
+      : ((p.resourceFilters as Record<string, string>) ?? {}),
+    shellTerminalHeight:
+      typeof p.shellTerminalHeight === "number" ? p.shellTerminalHeight : 300,
+  };
+}
