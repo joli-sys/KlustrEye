@@ -1,6 +1,9 @@
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { Providers } from "@/components/providers";
 import { Footer } from "@/components/footer";
+import { WorkspaceLayout } from "@/components/workspace-layout";
+import { LegacyClusterRedirect } from "@/components/legacy-cluster-redirect";
+import { CommandPalette } from "@/components/command-palette";
 
 // Pages
 import HomePage from "@/app/page";
@@ -68,7 +71,8 @@ export default function App() {
           <div className="flex-1 min-h-0 overflow-auto">
             <Routes>
               <Route path="/" element={<HomePage />} />
-              <Route path="/clusters/:contextName" element={<ClusterLayout />}>
+              <Route path="/w/:wsId" element={<WorkspaceLayout />}>
+                <Route path="clusters/:contextName" element={<ClusterLayout />}>
                 <Route index element={<Navigate to="overview" replace />} />
                 <Route path="overview" element={<OverviewPage />} />
                 <Route path="events" element={<EventsPage />} />
@@ -124,9 +128,13 @@ export default function App() {
                 <Route path="access/clusterrolebindings" element={<ClusterRoleBindingsPage />} />
                 <Route path="access/clusterrolebindings/:name" element={<ClusterRoleBindingDetailPage />} />
                 <Route path="plugins/:pluginId" element={<PluginPage />} />
+                </Route>
               </Route>
+              <Route path="/clusters/:contextName/*" element={<LegacyClusterRedirect />} />
+              <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>
           </div>
+          <CommandPalette />
           <Footer />
         </div>
       </Providers>
