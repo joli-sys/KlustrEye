@@ -1,7 +1,8 @@
 import { useMemo, useState } from "react";
 import { useResources, useDeleteResource } from "@/hooks/use-resources";
 import { usePodMetrics } from "@/hooks/use-metrics";
-import { useClusterNamespace } from "@/hooks/use-cluster-namespace";
+import { useWorkspaceNamespace } from "@/hooks/use-cluster-namespace";
+import { useWorkspaceId, useClusterPath } from "@/hooks/use-cluster-path";
 import { ResourceTable, nameColumn, namespaceColumn, ageColumn, statusBadge } from "@/components/resource-table";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -38,7 +39,9 @@ export default function PodsPage() {
   const { contextName = "" } = useParams();
   const ctx = decodeURIComponent(contextName);
   const navigate = useNavigate();
-  const selectedNamespace = useClusterNamespace(ctx);
+  const wsId = useWorkspaceId();
+  const path = useClusterPath();
+  const selectedNamespace = useWorkspaceNamespace(wsId);
   const ns = selectedNamespace === "__all__" ? undefined : selectedNamespace;
   const { data, isLoading, refetch, isFetching } = useResources(ctx, "pods", ns);
   const { data: metricsData } = usePodMetrics(ctx, ns);
@@ -185,7 +188,7 @@ export default function PodsPage() {
         if (!nodeName) return <span className="text-muted-foreground">-</span>;
         return (
           <Link
-            to={`/clusters/${encodeURIComponent(ctx)}/nodes/${encodeURIComponent(nodeName)}`}
+            to={path(`nodes/${encodeURIComponent(nodeName)}`)}
             className="text-primary hover:underline"
           >
             {nodeName}
@@ -194,7 +197,7 @@ export default function PodsPage() {
       },
     },
     ageColumn(),
-  ], [metricsMap]);
+  ], [metricsMap, path]);
 
   const handleDelete = async (item: Record<string, unknown>) => {
     const metadata = item.metadata as Record<string, unknown>;
@@ -268,19 +271,19 @@ export default function PodsPage() {
         onBatchDelete={handleBatchDelete}
         onLogs={(item) => {
           const metadata = item.metadata as Record<string, unknown>;
-          navigate(`/clusters/${encodeURIComponent(ctx)}/workloads/pods/${metadata.name}?tab=logs&ns=${metadata.namespace}`);
+          navigate(`${path(`workloads/pods/${metadata.name}`)}?tab=logs&ns=${metadata.namespace}`);
         }}
         onTerminal={(item) => {
           const metadata = item.metadata as Record<string, unknown>;
-          navigate(`/clusters/${encodeURIComponent(ctx)}/workloads/pods/${metadata.name}?tab=terminal&ns=${metadata.namespace}`);
+          navigate(`${path(`workloads/pods/${metadata.name}`)}?tab=terminal&ns=${metadata.namespace}`);
         }}
         onEdit={(item) => {
           const metadata = item.metadata as Record<string, unknown>;
-          navigate(`/clusters/${encodeURIComponent(ctx)}/workloads/pods/${metadata.name}?tab=yaml&ns=${metadata.namespace}`);
+          navigate(`${path(`workloads/pods/${metadata.name}`)}?tab=yaml&ns=${metadata.namespace}`);
         }}
         detailLinkFn={(item) => {
           const metadata = item.metadata as Record<string, unknown>;
-          return `/clusters/${encodeURIComponent(ctx)}/workloads/pods/${metadata.name}?ns=${metadata.namespace}`;
+          return `${path(`workloads/pods/${metadata.name}`)}?ns=${metadata.namespace}`;
         }}
       />
       <CreateResourceDialog

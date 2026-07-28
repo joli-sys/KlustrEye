@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useClusterNamespace } from "@/hooks/use-cluster-namespace";
+import { useWorkspaceNamespace } from "@/hooks/use-cluster-namespace";
+import { useWorkspaceId, useClusterPath } from "@/hooks/use-cluster-path";
 import { ResourceTable } from "@/components/resource-table";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -12,7 +13,7 @@ import { Plus, Trash2 } from "lucide-react";
 import { Link, useParams } from "react-router-dom";
 import type { ColumnDef } from "@tanstack/react-table";
 
-function makeColumns(ctx: string): ColumnDef<Record<string, unknown>>[] {
+function makeColumns(path: (subPath: string) => string): ColumnDef<Record<string, unknown>>[] {
   return [
   {
     id: "name",
@@ -23,7 +24,7 @@ function makeColumns(ctx: string): ColumnDef<Record<string, unknown>>[] {
       const ns = row.original.namespace as string;
       return (
         <Link
-          to={`/clusters/${encodeURIComponent(ctx)}/helm/${encodeURIComponent(name)}?namespace=${encodeURIComponent(ns)}`}
+          to={`${path(`helm/${encodeURIComponent(name)}`)}?namespace=${encodeURIComponent(ns)}`}
           className="font-medium text-primary hover:underline"
         >
           {name}
@@ -77,7 +78,9 @@ function makeColumns(ctx: string): ColumnDef<Record<string, unknown>>[] {
 export default function HelmPage() {
   const { contextName = "" } = useParams();
   const ctx = decodeURIComponent(contextName);
-  const selectedNamespace = useClusterNamespace(ctx);
+  const wsId = useWorkspaceId();
+  const path = useClusterPath();
+  const selectedNamespace = useWorkspaceNamespace(wsId);
   const ns = selectedNamespace === "__all__" ? undefined : selectedNamespace;
   const queryClient = useQueryClient();
   const { addToast } = useToast();
@@ -157,7 +160,7 @@ export default function HelmPage() {
       <ResourceTable
         data={data || []}
         isLoading={isLoading}
-        columns={makeColumns(ctx)}
+        columns={makeColumns(path)}
         kind="Helm Releases"
         onDelete={handleDelete}
       />

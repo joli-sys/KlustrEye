@@ -3,6 +3,7 @@ import { ResourceListPage } from "@/components/resource-list-page";
 import { useParams } from "react-router-dom";
 import { nameColumn, namespaceColumn, ageColumn } from "@/components/resource-table";
 import type { ColumnDef } from "@tanstack/react-table";
+import { useClusterPath } from "@/hooks/use-cluster-path";
 
 function getMetricDisplay(metrics: Record<string, unknown>[] | undefined): string {
   if (!metrics || metrics.length === 0) return "-";
@@ -73,6 +74,7 @@ const columns: ColumnDef<Record<string, unknown>>[] = [
 export default function HPAPage() {
   const { contextName = "" } = useParams();
   const ctx = decodeURIComponent(contextName);
+  const path = useClusterPath();
 
   return (
     <ResourceListPage
@@ -81,7 +83,7 @@ export default function HPAPage() {
       columns={columns}
       detailLinkFn={(item) => {
         const metadata = item.metadata as Record<string, unknown>;
-        return `/clusters/${encodeURIComponent(ctx)}/workloads/hpa/${metadata.name}?ns=${metadata.namespace}`;
+        return `${path(`workloads/hpa/${metadata.name}`)}?ns=${metadata.namespace}`;
       }}
     />
   );

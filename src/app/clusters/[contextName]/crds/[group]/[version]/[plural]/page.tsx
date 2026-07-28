@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { useCRDInstances, useDeleteCRDInstance, useCreateCRDInstance } from "@/hooks/use-crds";
-import { useClusterNamespace } from "@/hooks/use-cluster-namespace";
+import { useWorkspaceNamespace } from "@/hooks/use-cluster-namespace";
+import { useWorkspaceId, useClusterPath } from "@/hooks/use-cluster-path";
 import { ResourceTable, nameColumn, namespaceColumn, ageColumn } from "@/components/resource-table";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/toast";
@@ -21,7 +22,9 @@ export default function CRDInstancesPage() {
   const navigate = useNavigate();
   const { addToast } = useToast();
   const confirm = useConfirm();
-  const selectedNamespace = useClusterNamespace(ctx);
+  const wsId = useWorkspaceId();
+  const path = useClusterPath();
+  const selectedNamespace = useWorkspaceNamespace(wsId);
 
   const ns = scope === "Namespaced"
     ? (selectedNamespace === "__all__" ? undefined : selectedNamespace)
@@ -55,7 +58,7 @@ export default function CRDInstancesPage() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <Button variant="ghost" size="icon" onClick={() => navigate(`/clusters/${encodeURIComponent(ctx)}/crds`)}>
+          <Button variant="ghost" size="icon" onClick={() => navigate(path("crds"))}>
             <ArrowLeft className="h-4 w-4" />
           </Button>
           <div>
@@ -86,7 +89,7 @@ export default function CRDInstancesPage() {
           const qp = new URLSearchParams();
           qp.set("scope", scope);
           if (metadata?.namespace) qp.set("ns", metadata.namespace as string);
-          return `/clusters/${encodeURIComponent(ctx)}/crds/${encodeURIComponent(decodedGroup)}/${version}/${plural}/${metadata?.name}?${qp.toString()}`;
+          return `${path(`crds/${encodeURIComponent(decodedGroup)}/${version}/${plural}/${metadata?.name}`)}?${qp.toString()}`;
         }}
       />
       {createOpen && (

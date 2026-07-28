@@ -8,6 +8,7 @@ import { statusBadge } from "@/components/resource-table";
 import { parseCpuValue, parseMemoryValue, formatBytes, formatCpu, formatAge } from "@/lib/utils";
 import { getPluginsWithResourceExtension } from "@/lib/plugins/registry";
 import { Link, useParams } from "react-router-dom";
+import { useClusterPath } from "@/hooks/use-cluster-path";
 
 const nodePlugins = getPluginsWithResourceExtension("nodes");
 
@@ -38,6 +39,7 @@ function ResourceBar({ label, used, total, formatFn }: {
 export default function NodeDetailPage() {
   const { contextName = "", name = "" } = useParams();
   const ctx = decodeURIComponent(contextName);
+  const path = useClusterPath();
   const { data } = useResource(ctx, "nodes", name);
   const { data: metricsData } = useNodeMetrics(ctx);
   const { data: allPods } = useResources(ctx, "pods");
@@ -250,7 +252,7 @@ export default function NodeDetailPage() {
                         <tr key={`${podNs}/${podName}`} className="border-b hover:bg-muted/30 transition-colors">
                           <td className="px-4 py-2">
                             <Link
-                              to={`/clusters/${encodeURIComponent(ctx)}/workloads/pods/${encodeURIComponent(podName)}?ns=${encodeURIComponent(podNs)}`}
+                              to={`${path(`workloads/pods/${encodeURIComponent(podName)}`)}?ns=${encodeURIComponent(podNs)}`}
                               className="text-primary hover:underline font-medium"
                             >
                               {podName}

@@ -8,10 +8,12 @@ import { nameColumn, namespaceColumn, ageColumn } from "@/components/resource-ta
 import { Button } from "@/components/ui/button";
 import { Scaling, RotateCcw } from "lucide-react";
 import type { ColumnDef } from "@tanstack/react-table";
+import { useClusterPath } from "@/hooks/use-cluster-path";
 
 export default function DeploymentsPage() {
   const { contextName = "" } = useParams();
   const ctx = decodeURIComponent(contextName);
+  const path = useClusterPath();
   const [createOpen, setCreateOpen] = useState(false);
   const [scaleTarget, setScaleTarget] = useState<{
     name: string;
@@ -100,7 +102,7 @@ export default function DeploymentsPage() {
         onCreate={() => setCreateOpen(true)}
         detailLinkFn={(item) => {
           const metadata = item.metadata as Record<string, unknown>;
-          return `/clusters/${encodeURIComponent(ctx)}/workloads/deployments/${metadata.name}?ns=${metadata.namespace}`;
+          return `${path(`workloads/deployments/${metadata.name}`)}?ns=${metadata.namespace}`;
         }}
       />
       <CreateResourceDialog

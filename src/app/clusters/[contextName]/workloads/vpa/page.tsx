@@ -1,7 +1,8 @@
 ;
 import { useQuery } from "@tanstack/react-query";
 import { useParams } from "react-router-dom";
-import { useClusterNamespace } from "@/hooks/use-cluster-namespace";
+import { useWorkspaceNamespace } from "@/hooks/use-cluster-namespace";
+import { useWorkspaceId, useClusterPath } from "@/hooks/use-cluster-path";
 import { ResourceTable, nameColumn, namespaceColumn, ageColumn } from "@/components/resource-table";
 import { Button } from "@/components/ui/button";
 import { RefreshCw } from "lucide-react";
@@ -76,7 +77,9 @@ const columns: ColumnDef<Record<string, unknown>>[] = [
 export default function VPAPage() {
   const { contextName = "" } = useParams();
   const ctx = decodeURIComponent(contextName);
-  const selectedNamespace = useClusterNamespace(ctx);
+  const wsId = useWorkspaceId();
+  const path = useClusterPath();
+  const selectedNamespace = useWorkspaceNamespace(wsId);
   const ns = selectedNamespace === "__all__" ? undefined : selectedNamespace;
   const { data, isLoading, refetch, isFetching } = useVPAs(ctx, ns);
 
@@ -97,7 +100,7 @@ export default function VPAPage() {
         currentNamespace={ns ?? "__all__"}
         detailLinkFn={(item) => {
           const metadata = item.metadata as Record<string, unknown>;
-          return `/clusters/${encodeURIComponent(ctx)}/workloads/vpa/${metadata.name}?ns=${metadata.namespace}`;
+          return `${path(`workloads/vpa/${metadata.name}`)}?ns=${metadata.namespace}`;
         }}
       />
     </div>

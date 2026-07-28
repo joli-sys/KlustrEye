@@ -5,12 +5,14 @@ import { useResource, useResources } from "@/hooks/use-resources";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Link } from "react-router-dom";
+import { useClusterPath } from "@/hooks/use-cluster-path";
 
 export default function PVCDetailPage() {
   const { contextName = "", name = "" } = useParams();
   const ctx = decodeURIComponent(contextName);
   const [searchParams] = useSearchParams();
   const namespace = searchParams.get("ns") || "default";
+  const path = useClusterPath();
 
   const { data: pvc } = useResource(ctx, "persistentvolumeclaims", name, namespace);
   const { data: pods } = useResources(ctx, "pods", namespace);
@@ -97,7 +99,7 @@ export default function PVCDetailPage() {
                   return (
                     <div key={podName} className="flex items-center justify-between p-2 rounded-md border">
                       <Link
-                        to={`/clusters/${encodeURIComponent(ctx)}/workloads/pods/${encodeURIComponent(podName)}?ns=${encodeURIComponent(podNs)}`}
+                        to={`${path(`workloads/pods/${encodeURIComponent(podName)}`)}?ns=${encodeURIComponent(podNs)}`}
                         className="text-primary hover:underline text-sm font-medium"
                       >
                         {podName}
