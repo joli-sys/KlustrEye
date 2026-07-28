@@ -1,5 +1,6 @@
 pub mod ai;
 pub mod clusters;
+pub mod files;
 pub mod grafana;
 pub mod helm;
 pub mod logs;
@@ -91,6 +92,12 @@ pub fn build_router(state: AppState) -> Router {
             get(workspaces::get_workspace)
                 .put(workspaces::update_workspace)
                 .delete(workspaces::delete_workspace))
+        // Workspace filesystem — every path is confined to the workspace's
+        // bound folder by fs::resolve_in_workspace.
+        .route("/api/workspaces/:ws_id/files", get(files::list_files))
+        .route("/api/workspaces/:ws_id/file",
+            get(files::read_file).put(files::write_file))
+        .route("/api/workspaces/:ws_id/search", get(files::search_files))
         // Grafana / Mimir plugin
         .route("/api/clusters/:ctx/plugins/grafana/settings",
             get(grafana::get_settings)

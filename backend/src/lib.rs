@@ -1,5 +1,6 @@
 pub mod db;
 pub mod error;
+pub mod fs;
 pub mod k8s;
 pub mod routes;
 pub mod ai;

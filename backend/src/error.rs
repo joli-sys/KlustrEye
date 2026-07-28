@@ -10,6 +10,12 @@ pub enum AppError {
     NotFound(String),
     #[error("Bad request: {0}")]
     BadRequest(String),
+    #[error("Forbidden: {0}")]
+    Forbidden(String),
+    #[error("Conflict: {0}")]
+    Conflict(String),
+    #[error("Payload too large: {0}")]
+    PayloadTooLarge(String),
     #[error("{0}")]
     Internal(String),
     #[error("{0}")]
@@ -43,6 +49,9 @@ impl IntoResponse for AppError {
         let (status, message) = match &self {
             AppError::NotFound(msg) => (StatusCode::NOT_FOUND, msg.clone()),
             AppError::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg.clone()),
+            AppError::Forbidden(msg) => (StatusCode::FORBIDDEN, msg.clone()),
+            AppError::Conflict(msg) => (StatusCode::CONFLICT, msg.clone()),
+            AppError::PayloadTooLarge(msg) => (StatusCode::PAYLOAD_TOO_LARGE, msg.clone()),
             AppError::Internal(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg.clone()),
             AppError::Kubernetes(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg.clone()),
             AppError::Database(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),

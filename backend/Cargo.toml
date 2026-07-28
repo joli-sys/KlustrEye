@@ -44,6 +44,8 @@ base64 = "0.22"
 flate2 = "1"
 tempfile = "3"
 dirs = "6"
+notify = "6"
+ignore = "0.4"
 
 portable-pty = "0.8"
 urlencoding = "2"
