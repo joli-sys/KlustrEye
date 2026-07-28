@@ -9,6 +9,7 @@ import { AiChatPanel } from "@/components/ai-chat-panel";
 import { useWorkspaceId } from "@/hooks/use-cluster-path";
 import { useWorkspaceNamespace } from "@/hooks/use-cluster-namespace";
 import { useClusterInfo } from "@/hooks/use-clusters";
+import { useWorkspace } from "@/hooks/use-workspaces";
 
 export default function ClusterLayout() {
   const { contextName = "" } = useParams();
@@ -16,6 +17,9 @@ export default function ClusterLayout() {
   const wsId = useWorkspaceId();
   const namespace = useWorkspaceNamespace(wsId);
   const { data: clusterInfo } = useClusterInfo(decodedContext);
+  // WorkspaceLayout (parent route) already fetched and gated on this; the
+  // query is cache-hot here, so this never re-triggers a loading state.
+  const { data: workspace } = useWorkspace(wsId);
 
   const aiContext = {
     cluster: decodedContext,
@@ -23,13 +27,17 @@ export default function ClusterLayout() {
     namespace: namespace || undefined,
   };
 
+  // Should always be cache-hot from WorkspaceLayout; bail rather than pass
+  // Sidebar an undefined workspace.
+  if (!workspace) return null;
+
   return (
     <ClusterColorProvider contextName={decodedContext}>
       <div className="flex h-full overflow-hidden">
         <div className="hidden md:flex">
-          <Sidebar contextName={decodedContext} />
+          <Sidebar workspace={workspace} contextName={decodedContext} />
         </div>
-        <MobileSidebarDrawer contextName={decodedContext} />
+        <MobileSidebarDrawer workspace={workspace} contextName={decodedContext} />
         <div className="flex flex-col flex-1 overflow-hidden">
           <Header contextName={decodedContext} />
           <TabBar wsId={wsId} />

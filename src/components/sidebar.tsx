@@ -9,6 +9,7 @@ import { useSavedSearches } from "@/lib/stores/saved-searches-store";
 import { SIDEBAR_SECTIONS, RESOURCE_ROUTE_MAP, RESOURCE_REGISTRY, type ResourceKind } from "@/lib/constants";
 import { clusterPath } from "@/lib/paths";
 import { useWorkspaceId } from "@/hooks/use-cluster-path";
+import type { Workspace } from "@/hooks/use-workspaces";
 import { KlustrEyeLogo } from "@/components/klustreye-logo";
 import { ClusterSwitcher } from "@/components/cluster-switcher";
 import { Badge } from "@/components/ui/badge";
@@ -31,7 +32,7 @@ const iconMap: Record<string, React.ComponentType<{ className?: string }>> = {
 
 const pagePlugins = getPluginsWithPages();
 
-export function Sidebar({ contextName, onNavigate, forceExpanded }: { contextName: string; onNavigate?: () => void; forceExpanded?: boolean }) {
+export function Sidebar({ workspace, contextName, onNavigate, forceExpanded }: { workspace: Workspace; contextName: string; onNavigate?: () => void; forceExpanded?: boolean }) {
   const pathname = useLocation().pathname;
   const navigate = useNavigate();
   const { sidebarOpen: _sidebarOpen, toggleSidebar, setWorkspaceNamespace } = useUIStore();
@@ -64,6 +65,16 @@ export function Sidebar({ contextName, onNavigate, forceExpanded }: { contextNam
       </div>
 
       <nav className="flex-1 overflow-y-auto py-2">
+        {workspace.folderPath && sidebarOpen && (
+          <div className="px-3 py-2">
+            <div className="text-xs font-medium text-muted-foreground mb-1">Files</div>
+            <p className="text-xs text-muted-foreground">
+              File browsing arrives in P1.
+            </p>
+          </div>
+        )}
+        {workspace.contextName && (
+        <>
         {SIDEBAR_SECTIONS.map((section, i) => (
           <div key={i} className="mb-2">
             {sidebarOpen && (
@@ -210,6 +221,16 @@ export function Sidebar({ contextName, onNavigate, forceExpanded }: { contextNam
                 </div>
               );
             })}
+          </div>
+        )}
+        </>
+        )}
+        {sidebarOpen && (
+          <div className="px-3 py-2 border-t pt-2">
+            <div className="text-xs font-medium text-muted-foreground mb-1">Terminals & Agents</div>
+            <p className="text-xs text-muted-foreground">
+              Agent sessions arrive in P3.
+            </p>
           </div>
         )}
       </nav>
