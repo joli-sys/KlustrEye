@@ -7,6 +7,7 @@ import {
   Circle,
   FolderOpen,
   Pencil,
+  Plug,
   SlidersHorizontal,
 } from "lucide-react";
 import { cn, formatAge } from "@/lib/utils";
@@ -21,6 +22,7 @@ import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { AgentDefinitionsDialog } from "@/components/agent-definitions-dialog";
+import { McpServersDialog } from "@/components/mcp-servers-dialog";
 import type { Workspace } from "@/hooks/use-workspaces";
 import {
   useAgentDefinitions,
@@ -114,6 +116,7 @@ export function SidebarAgents({ workspace, wsId }: { workspace: Workspace; wsId:
   const [selectedDefinitionId, setSelectedDefinitionId] = useState("");
   const [cwd, setCwd] = useState(workspace.folderPath ?? "");
   const [definitionsOpen, setDefinitionsOpen] = useState(false);
+  const [mcpOpen, setMcpOpen] = useState(false);
 
   /** `null` = nobody is being renamed; otherwise the session id being edited. */
   const [renamingId, setRenamingId] = useState<string | null>(null);
@@ -265,15 +268,29 @@ export function SidebarAgents({ workspace, wsId }: { workspace: Workspace; wsId:
           <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
             New session
           </span>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-6 w-6 shrink-0"
-            title="Manage agents"
-            onClick={() => setDefinitionsOpen(true)}
-          >
-            <SlidersHorizontal className="h-3.5 w-3.5" />
-          </Button>
+          <div className="flex shrink-0 items-center">
+            {/* Next to "Manage agents" on purpose: MCP servers decide which
+                tools an agent actually has, so "why can't my agent do X" is
+                answered here rather than somewhere else entirely. */}
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-6 w-6 shrink-0"
+              title="MCP servers"
+              onClick={() => setMcpOpen(true)}
+            >
+              <Plug className="h-3.5 w-3.5" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-6 w-6 shrink-0"
+              title="Manage agents"
+              onClick={() => setDefinitionsOpen(true)}
+            >
+              <SlidersHorizontal className="h-3.5 w-3.5" />
+            </Button>
+          </div>
         </div>
 
         <Select
@@ -463,6 +480,12 @@ export function SidebarAgents({ workspace, wsId }: { workspace: Workspace; wsId:
       </div>
 
       <AgentDefinitionsDialog open={definitionsOpen} onOpenChange={setDefinitionsOpen} />
+      <McpServersDialog
+        open={mcpOpen}
+        onOpenChange={setMcpOpen}
+        wsId={wsId}
+        folderPath={workspace.folderPath}
+      />
     </div>
   );
 }
