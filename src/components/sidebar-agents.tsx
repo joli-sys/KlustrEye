@@ -12,7 +12,7 @@ import {
 import { cn, formatAge } from "@/lib/utils";
 import { workspacePath } from "@/lib/paths";
 import { abbreviatePath } from "@/lib/agent-forms";
-import { isTauri, pickFolder } from "@/lib/folder-picker";
+import { errorText, isTauri, pickFolder } from "@/lib/folder-picker";
 import { useTabStore } from "@/lib/stores/tab-store";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import { useToast } from "@/components/ui/toast";
@@ -152,7 +152,7 @@ export function SidebarAgents({ workspace, wsId }: { workspace: Workspace; wsId:
       addToast({
         title: "Could not open the folder picker",
         description:
-          (e as Error).message + " You can still type an absolute path into the field.",
+          errorText(e) + " You can still type an absolute path into the field.",
         variant: "destructive",
       });
     }

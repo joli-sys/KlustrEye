@@ -19,7 +19,7 @@ import {
 import { orderedClusters } from "@/lib/workspace-clusters";
 // Shared with the agents sidebar's folder field — see `lib/folder-picker.ts`
 // for why cancel and failure must stay distinguishable.
-import { isTauri, pickFolder } from "@/lib/folder-picker";
+import { errorText, isTauri, pickFolder } from "@/lib/folder-picker";
 import { FolderOpen, ChevronUp, ChevronDown, X, AlertCircle } from "lucide-react";
 
 interface WorkspaceDialogProps {
@@ -66,7 +66,7 @@ export function WorkspaceDialog({ workspace, open, onOpenChange }: WorkspaceDial
       addToast({
         title: "Could not open the folder picker",
         description:
-          (e as Error).message +
+          errorText(e) +
           " You can still type an absolute path into the field.",
         variant: "destructive",
       });
