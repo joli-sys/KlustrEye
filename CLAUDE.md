@@ -37,7 +37,7 @@ cargo test -p backend --lib   # Rust backend tests
 
 There is no `db:push`, `db:migrate`, or `db:studio` — those were Prisma-era scripts and no longer exist.
 
-`npm test` runs 25 vitest tests; `cargo test -p backend --lib` runs 33 Rust tests.
+`npm test` runs 80 vitest tests; `cargo test -p backend --lib` runs 64 Rust tests.
 
 ## Project Structure
 
