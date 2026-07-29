@@ -21,9 +21,10 @@
 //! `CommandBuilder::new(prog)` + one `.arg()` per element. There is no code
 //! path in this module that formats a command into a string.
 
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -31,7 +32,8 @@ use dashmap::DashMap;
 use regex::Regex;
 use portable_pty::{native_pty_system, ChildKiller, CommandBuilder, MasterPty, PtySize};
 use sqlx::SqlitePool;
-use tokio::sync::{broadcast, oneshot};
+use tokio::io::AsyncWriteExt;
+use tokio::sync::{broadcast, mpsc, oneshot};
 use uuid::Uuid;
 
 use crate::error::AppError;
@@ -188,6 +190,452 @@ impl ScrollbackBuffer {
         let skip = self.buf.len().saturating_sub(n);
         self.buf.iter().skip(skip).copied().collect()
     }
+}
+
+// ---------------------------------------------------------------------------
+// Durable transcripts
+// ---------------------------------------------------------------------------
+//
+// The scrollback above dies with the process that holds it, so a server
+// restart used to leave a session listed but unreadable — for an agent that
+// ran overnight the transcript *is* the artefact. Every session therefore also
+// streams its output to `<data_dir>/agent-logs/<session_id>.log` as it
+// arrives, not at exit: a crash or a force-quit is exactly when you most want
+// to read what happened.
+//
+// Everything here is best effort. A write failure is logged and the session
+// carries on — a full disk must not kill a working agent.
+
+/// Directory, beside the database, that holds one log file per session.
+pub const TRANSCRIPT_DIR_NAME: &str = "agent-logs";
+
+/// Bytes kept per on-disk transcript, newest wins — the same rule as
+/// [`ScrollbackBuffer`], four times the size. Disk is cheaper than RAM, and an
+/// overnight run deserves more history than a tab does.
+pub const TRANSCRIPT_CAP: usize = 1024 * 1024;
+
+/// How far past [`TRANSCRIPT_CAP`] a file may grow before it is rewritten to
+/// its tail. Compaction copies the whole cap, so doing it on every flush past
+/// the limit would turn a chatty agent into a disk benchmark; this trades a
+/// little slack for one rewrite per 256 KiB of overflow.
+pub const TRANSCRIPT_SLACK: usize = 256 * 1024;
+
+/// Exited sessions kept per workspace. Rows and logs beyond this are dropped
+/// on startup, oldest first — see [`prune_agent_sessions`].
+pub const TRANSCRIPT_RETENTION_PER_WORKSPACE: usize = 200;
+
+/// Chunks queued between the output pump and the writer task. Deep enough to
+/// ride out a slow flush; past it chunks are dropped rather than awaited, so
+/// the disk can never back up into the PTY.
+const TRANSCRIPT_QUEUE_CAPACITY: usize = 512;
+
+/// Buffered output is flushed at least this often, so an unclean exit loses at
+/// most this much of the transcript.
+const TRANSCRIPT_FLUSH_INTERVAL: Duration = Duration::from_millis(250);
+
+/// …and immediately once this much has accumulated, so a burst does not sit in
+/// memory waiting for the tick.
+const TRANSCRIPT_FLUSH_BYTES: usize = 32 * 1024;
+
+/// The transcript directory belonging to a `DATABASE_URL`: `agent-logs` beside
+/// the database file, so both live in the same app-data directory (see
+/// `main.rs` for how that default is built).
+///
+/// A URL with no directory part — `sqlite::memory:`, a bare filename — resolves
+/// relative to the process's working directory, which is what a caller passing
+/// a bare filename for the database already asked for.
+pub fn transcript_dir_for_database_url(database_url: &str) -> PathBuf {
+    let path = database_url
+        .strip_prefix("sqlite://")
+        .or_else(|| database_url.strip_prefix("sqlite:"))
+        .or_else(|| database_url.strip_prefix("file:"))
+        .unwrap_or(database_url);
+    // sqlx accepts `?mode=rwc`-style parameters; they are not part of the path.
+    let path = path.split('?').next().unwrap_or(path);
+
+    Path::new(path)
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(TRANSCRIPT_DIR_NAME)
+}
+
+/// The log file name for a session id, or `None` when the id is not a plain
+/// UUID.
+///
+/// Session ids are server-generated UUIDs, but this is the only place an id
+/// becomes a path, so it validates rather than trusts: anything with a
+/// separator, a `..`, or any other shape is rejected outright instead of being
+/// sanitized into something that looks close enough.
+pub fn transcript_file_name(session_id: &str) -> Option<String> {
+    let canonical = Uuid::parse_str(session_id).ok()?.hyphenated().to_string();
+    // `parse_str` also accepts braced, URN and unhyphenated forms. Those are
+    // valid UUIDs but not *this* id shape, and accepting them would mean two
+    // spellings of one session mapping to one file.
+    (session_id.len() == canonical.len() && session_id.eq_ignore_ascii_case(&canonical))
+        .then(|| format!("{canonical}.log"))
+}
+
+/// The session id a log file name refers to, or `None` if it is not one of
+/// ours (a partly written `.log.tmp`, or anything else that got dropped in).
+fn transcript_id_from_file_name(name: &str) -> Option<String> {
+    let stem = name.strip_suffix(".log")?;
+    transcript_file_name(stem).map(|_| stem.to_string())
+}
+
+/// The newest `cap` bytes of `data`. The on-disk cap follows the in-memory
+/// ring: when something has to go, it is the oldest output.
+pub fn tail_bytes(data: &[u8], cap: usize) -> &[u8] {
+    let skip = data.len().saturating_sub(cap);
+    &data[skip..]
+}
+
+/// Whether a file this long should be rewritten down to its tail.
+pub fn needs_compaction(len: usize, cap: usize, slack: usize) -> bool {
+    len > cap.saturating_add(slack)
+}
+
+/// The session ids to drop, given every session ordered by workspace and then
+/// newest first, keeping at most `keep_per_workspace` of each workspace's.
+///
+/// Per workspace rather than globally so one busy workspace cannot evict
+/// another's history, and oldest-first so the rule is one a user could predict:
+/// the last N runs of this workspace are always there.
+pub fn sessions_to_prune(
+    ordered_by_workspace_newest_first: &[(String, String)],
+    keep_per_workspace: usize,
+) -> Vec<String> {
+    let mut doomed = Vec::new();
+    let mut current: Option<&str> = None;
+    let mut kept = 0usize;
+
+    for (workspace_id, session_id) in ordered_by_workspace_newest_first {
+        if current != Some(workspace_id.as_str()) {
+            current = Some(workspace_id);
+            kept = 0;
+        }
+        kept += 1;
+        if kept > keep_per_workspace {
+            doomed.push(session_id.clone());
+        }
+    }
+    doomed
+}
+
+/// Reads and writes session transcripts under one directory.
+///
+/// Cheap to clone — it is a path and nothing else. Every method is best effort
+/// and reports failure by returning "nothing there", because a transcript that
+/// cannot be read is indistinguishable to the user from one that was never
+/// written, and neither is worth failing a request over.
+#[derive(Clone, Debug)]
+pub struct TranscriptStore {
+    dir: Arc<PathBuf>,
+}
+
+impl TranscriptStore {
+    pub fn new(dir: PathBuf) -> Self {
+        Self { dir: Arc::new(dir) }
+    }
+
+    pub fn dir(&self) -> &Path {
+        self.dir.as_path()
+    }
+
+    /// The path a session's transcript would live at, or `None` when the id is
+    /// not a plain UUID.
+    pub fn path_for(&self, session_id: &str) -> Option<PathBuf> {
+        transcript_file_name(session_id).map(|name| self.dir.join(name))
+    }
+
+    /// The transcript, capped to its newest [`TRANSCRIPT_CAP`] bytes, or `None`
+    /// when there is no file. An existing but empty file returns `Some(vec![])`
+    /// — "ran and said nothing" is a different fact from "never recorded".
+    pub async fn read(&self, session_id: &str) -> Option<Vec<u8>> {
+        let path = self.path_for(session_id)?;
+        match tokio::fs::read(&path).await {
+            Ok(data) => Some(tail_bytes(&data, TRANSCRIPT_CAP).to_vec()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+            Err(e) => {
+                tracing::warn!(path = %path.display(), error = %e, "failed to read agent transcript");
+                None
+            }
+        }
+    }
+
+    pub async fn has(&self, session_id: &str) -> bool {
+        match self.path_for(session_id) {
+            Some(path) => tokio::fs::metadata(&path).await.is_ok(),
+            None => false,
+        }
+    }
+
+    /// Every session id with a transcript on disk, from ONE directory read.
+    ///
+    /// The list endpoint needs this for many rows at once; stat-ing per row
+    /// would turn one page of sessions into a page of syscalls.
+    pub async fn list_ids(&self) -> HashSet<String> {
+        let mut ids = HashSet::new();
+        let Ok(mut entries) = tokio::fs::read_dir(self.dir.as_path()).await else {
+            return ids;
+        };
+        while let Ok(Some(entry)) = entries.next_entry().await {
+            if let Some(id) = transcript_id_from_file_name(&entry.file_name().to_string_lossy()) {
+                ids.insert(id);
+            }
+        }
+        ids
+    }
+
+    /// Removes a session's transcript. Missing is success.
+    pub async fn delete(&self, session_id: &str) {
+        let Some(path) = self.path_for(session_id) else {
+            return;
+        };
+        if let Err(e) = tokio::fs::remove_file(&path).await {
+            if e.kind() != std::io::ErrorKind::NotFound {
+                tracing::warn!(path = %path.display(), error = %e, "failed to delete agent transcript");
+            }
+        }
+    }
+
+    /// Removes a file by name, used by the orphan sweep for leftovers that have
+    /// no session id (a `.log.tmp` from an interrupted compaction).
+    async fn delete_file_name(&self, name: &str) {
+        let path = self.dir.join(name);
+        let _ = tokio::fs::remove_file(&path).await;
+    }
+
+    /// Starts a writer task for a session and returns the handle the output
+    /// pump feeds. `None` when the id is not a plain UUID — the session then
+    /// simply has no transcript rather than writing to a guessed path.
+    pub fn writer(&self, session_id: &str) -> Option<TranscriptWriter> {
+        let path = self.path_for(session_id)?;
+        let (tx, rx) = mpsc::channel::<Vec<u8>>(TRANSCRIPT_QUEUE_CAPACITY);
+        let dropped = Arc::new(AtomicU64::new(0));
+
+        tokio::spawn(transcript_writer_task(path, rx, dropped.clone()));
+
+        Some(TranscriptWriter { tx, dropped })
+    }
+}
+
+/// The output pump's end of a session's transcript.
+///
+/// Deliberately synchronous and non-blocking: it is called from the same task
+/// that fans output out to attached sockets, and disk latency must never reach
+/// them.
+#[derive(Clone, Debug)]
+pub struct TranscriptWriter {
+    tx: mpsc::Sender<Vec<u8>>,
+    /// Chunks the writer never saw because the queue was full. Reported into
+    /// the transcript itself at the next flush — a gap the reader can see beats
+    /// a gap they cannot.
+    dropped: Arc<AtomicU64>,
+}
+
+impl TranscriptWriter {
+    /// Queues a chunk. Returns immediately, always: a queue that has backed up
+    /// behind a stalled disk drops the chunk rather than waiting, because the
+    /// alternative is stalling the pump, then the PTY reader, then the agent.
+    pub fn write(&self, chunk: &[u8]) {
+        if self.tx.try_send(chunk.to_vec()).is_err() {
+            self.dropped
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+}
+
+/// Rewrites `path` down to its newest [`TRANSCRIPT_CAP`] bytes.
+///
+/// Through a temporary file and a rename so an interrupted compaction leaves
+/// the previous transcript whole rather than a half-written one.
+async fn compact_transcript(path: &Path) -> std::io::Result<u64> {
+    let data = tokio::fs::read(path).await?;
+    let tail = tail_bytes(&data, TRANSCRIPT_CAP);
+
+    let tmp = path.with_extension("log.tmp");
+    tokio::fs::write(&tmp, tail).await?;
+    tokio::fs::rename(&tmp, path).await?;
+    Ok(tail.len() as u64)
+}
+
+/// Owns a session's log file for the life of the session.
+///
+/// Entirely async (`tokio::fs`): the PTY reader thread and the output pump both
+/// hand off here and neither ever touches the disk.
+async fn transcript_writer_task(
+    path: PathBuf,
+    mut rx: mpsc::Receiver<Vec<u8>>,
+    dropped: Arc<AtomicU64>,
+) {
+    if let Some(parent) = path.parent() {
+        if let Err(e) = tokio::fs::create_dir_all(parent).await {
+            tracing::warn!(dir = %parent.display(), error = %e, "cannot create agent transcript directory");
+            return;
+        }
+    }
+
+    let mut file = match tokio::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+        .await
+    {
+        Ok(f) => f,
+        Err(e) => {
+            tracing::warn!(path = %path.display(), error = %e, "cannot open agent transcript");
+            return;
+        }
+    };
+
+    let mut on_disk = file.metadata().await.map(|m| m.len()).unwrap_or(0);
+    let mut buf: Vec<u8> = Vec::with_capacity(TRANSCRIPT_FLUSH_BYTES);
+    let mut warned = false;
+
+    let mut ticker = tokio::time::interval(TRANSCRIPT_FLUSH_INTERVAL);
+    ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+
+    loop {
+        let (closed, flush) = tokio::select! {
+            received = rx.recv() => match received {
+                Some(chunk) => {
+                    buf.extend_from_slice(&chunk);
+                    // Size threshold: a burst is not left sitting in memory
+                    // waiting for the tick.
+                    (false, buf.len() >= TRANSCRIPT_FLUSH_BYTES)
+                }
+                // The pump is gone: the session ended. Flush and finish.
+                None => (true, true),
+            },
+            _ = ticker.tick() => (false, !buf.is_empty()),
+        };
+
+        if !flush {
+            continue;
+        }
+
+        let lost = dropped.swap(0, std::sync::atomic::Ordering::Relaxed);
+        if lost > 0 {
+            let notice = format!(
+                "\r\n[transcript: {lost} chunk(s) of output not recorded — the disk fell behind]\r\n"
+            );
+            // Prepended to this flush, so the gap is marked roughly where it
+            // happened rather than silently stitched over.
+            let mut marked = notice.into_bytes();
+            marked.append(&mut buf);
+            buf = marked;
+        }
+
+        match write_all_and_flush(&mut file, &buf).await {
+            Ok(()) => on_disk += buf.len() as u64,
+            Err(e) => {
+                // Non-fatal by design: the agent keeps running and its output
+                // keeps reaching attached sockets. Warn once so a full disk is
+                // one line in the log, not one per flush.
+                if !warned {
+                    warned = true;
+                    tracing::warn!(path = %path.display(), error = %e, "agent transcript write failed — continuing without it");
+                }
+            }
+        }
+        buf.clear();
+
+        if needs_compaction(on_disk as usize, TRANSCRIPT_CAP, TRANSCRIPT_SLACK) {
+            match compact_transcript(&path).await {
+                Ok(len) => {
+                    on_disk = len;
+                    // The rename replaced the inode; the old handle would keep
+                    // appending to a file nobody can see.
+                    match tokio::fs::OpenOptions::new().append(true).open(&path).await {
+                        Ok(f) => file = f,
+                        Err(e) => {
+                            tracing::warn!(path = %path.display(), error = %e, "lost agent transcript after compaction");
+                            return;
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(path = %path.display(), error = %e, "failed to compact agent transcript");
+                    // Do not retry every flush; let it grow to the next
+                    // threshold instead of hammering a failing disk.
+                    on_disk = TRANSCRIPT_CAP as u64;
+                }
+            }
+        }
+
+        if closed {
+            return;
+        }
+    }
+}
+
+async fn write_all_and_flush(file: &mut tokio::fs::File, data: &[u8]) -> std::io::Result<()> {
+    file.write_all(data).await?;
+    file.flush().await
+}
+
+/// Startup retention: drops rows and logs for exited sessions beyond the most
+/// recent [`TRANSCRIPT_RETENTION_PER_WORKSPACE`] per workspace, oldest first,
+/// then sweeps log files that no longer have a row at all.
+///
+/// Without this both the table and the directory grow forever. With it the rule
+/// is one a user could state: your last N runs per workspace are kept, and
+/// nothing else is.
+pub async fn prune_agent_sessions(
+    db: &SqlitePool,
+    store: Option<&TranscriptStore>,
+    keep_per_workspace: usize,
+) -> Result<usize, sqlx::Error> {
+    // Newest first within each workspace — `sessions_to_prune` drops the tail.
+    let exited: Vec<(String, String)> = sqlx::query_as(
+        "SELECT workspace_id, id FROM agent_sessions
+         WHERE status = 'exited'
+         ORDER BY workspace_id ASC, created_at DESC, rowid DESC",
+    )
+    .fetch_all(db)
+    .await?;
+
+    let doomed = sessions_to_prune(&exited, keep_per_workspace);
+
+    for id in &doomed {
+        sqlx::query("DELETE FROM agent_sessions WHERE id = ?")
+            .bind(id)
+            .execute(db)
+            .await?;
+        if let Some(store) = store {
+            store.delete(id).await;
+        }
+    }
+
+    // A log whose row is gone — pruned here, or removed with its workspace —
+    // can never be reached again, so it is pure waste.
+    if let Some(store) = store {
+        let live: HashSet<String> = sqlx::query_scalar("SELECT id FROM agent_sessions")
+            .fetch_all(db)
+            .await?
+            .into_iter()
+            .collect();
+
+        for id in store.list_ids().await {
+            if !live.contains(&id) {
+                store.delete(&id).await;
+            }
+        }
+
+        // Leftovers from a compaction interrupted by a crash.
+        if let Ok(mut entries) = tokio::fs::read_dir(store.dir()).await {
+            while let Ok(Some(entry)) = entries.next_entry().await {
+                let name = entry.file_name().to_string_lossy().to_string();
+                if name.ends_with(".log.tmp") {
+                    store.delete_file_name(&name).await;
+                }
+            }
+        }
+    }
+
+    Ok(doomed.len())
 }
 
 // ---------------------------------------------------------------------------
@@ -939,6 +1387,10 @@ pub struct AgentRegistry {
     /// editing a definition transparently produces a new entry instead of
     /// serving a stale compilation.
     pattern_cache: Arc<DashMap<Vec<String>, Arc<PromptPatterns>>>,
+    /// Where session transcripts are written and replayed from. `None` means
+    /// no durable transcripts at all — the registry still works, sessions are
+    /// simply unreadable once the process that ran them is gone.
+    transcripts: Option<TranscriptStore>,
 }
 
 impl Default for AgentRegistry {
@@ -948,12 +1400,29 @@ impl Default for AgentRegistry {
 }
 
 impl AgentRegistry {
+    /// A registry with no durable transcripts. Used by tests; the server always
+    /// goes through [`AgentRegistry::with_transcripts`].
     pub fn new() -> Self {
         Self {
             sessions: Arc::new(DashMap::new()),
             spawn_lock: Arc::new(tokio::sync::Mutex::new(())),
             pattern_cache: Arc::new(DashMap::new()),
+            transcripts: None,
         }
+    }
+
+    /// A registry that mirrors every session's output into `dir`.
+    pub fn with_transcripts(dir: PathBuf) -> Self {
+        Self {
+            transcripts: Some(TranscriptStore::new(dir)),
+            ..Self::new()
+        }
+    }
+
+    /// The transcript store, for the attach path (replaying an archived
+    /// session) and the API layer (reporting whether one exists).
+    pub fn transcripts(&self) -> Option<&TranscriptStore> {
+        self.transcripts.as_ref()
     }
 
     pub fn get(&self, id: &str) -> Option<Arc<AgentSession>> {
@@ -986,8 +1455,9 @@ impl AgentRegistry {
             .collect()
     }
 
-    /// Kills a session's process group and forgets it. Scrollback goes with it,
-    /// so callers that want the transcript should read it before removing.
+    /// Kills a session's process group and forgets it. The in-memory scrollback
+    /// goes with it; the on-disk transcript does not, and is what the attach
+    /// path replays afterwards.
     pub fn remove(&self, id: &str) -> Option<Arc<AgentSession>> {
         let session = self.sessions.remove(id).map(|(_, s)| s)?;
         if session.is_running() {
@@ -1150,6 +1620,13 @@ impl AgentRegistry {
         // subscriber set, so a stalled socket cannot back up the PTY.
         let pump_db = db.clone();
         let pump_id = id.to_string();
+        // The durable half of the scrollback. Started here so the file exists
+        // from the session's first byte, not from its last: a crash mid-run is
+        // exactly when the transcript matters.
+        let transcript = self
+            .transcripts
+            .as_ref()
+            .and_then(|store| store.writer(id));
         tokio::spawn(async move {
             let mut last_touch: i64 = 0;
             // Auto-title state. `opening` accumulates separately from the
@@ -1165,6 +1642,12 @@ impl AgentRegistry {
                     let mut sb = scrollback.lock().expect("scrollback mutex");
                     sb.push(&chunk);
                     let _ = output_tx.send(chunk.clone());
+                }
+
+                // Outside the lock and non-blocking: the transcript must never
+                // be in the way of the bytes reaching an attached socket.
+                if let Some(writer) = &transcript {
+                    writer.write(&chunk);
                 }
 
                 // The in-memory signal `activity` is derived from. Updated on
@@ -1845,6 +2328,178 @@ mod tests {
         assert_eq!(reg.live_count(), 0);
         assert!(reg.list(None).is_empty());
         assert!(reg.get("nope").is_none());
+    }
+
+    // -- transcript paths --------------------------------------------------
+
+    const A_UUID: &str = "3f2b1c4a-9d8e-4f10-8a2b-5c6d7e8f9a0b";
+
+    #[test]
+    fn a_session_id_becomes_its_log_file_name() {
+        assert_eq!(
+            transcript_file_name(A_UUID),
+            Some(format!("{A_UUID}.log"))
+        );
+    }
+
+    #[test]
+    fn a_non_uuid_id_never_becomes_a_path() {
+        // The whole point of the check: nothing that is not a plain UUID may
+        // reach the filesystem, sanitized or otherwise.
+        for hostile in [
+            "",
+            "   ",
+            "not-a-uuid",
+            "../../etc/passwd",
+            "../3f2b1c4a-9d8e-4f10-8a2b-5c6d7e8f9a0b",
+            "3f2b1c4a-9d8e-4f10-8a2b-5c6d7e8f9a0b/../../x",
+            "3f2b1c4a-9d8e-4f10-8a2b-5c6d7e8f9a0b\0",
+            "3f2b1c4a-9d8e-4f10-8a2b-5c6d7e8f9a0b.log",
+            // Valid UUIDs, but not the shape our ids have — accepting them
+            // would map two spellings onto one session.
+            "{3f2b1c4a-9d8e-4f10-8a2b-5c6d7e8f9a0b}",
+            "urn:uuid:3f2b1c4a-9d8e-4f10-8a2b-5c6d7e8f9a0b",
+            "3f2b1c4a9d8e4f108a2b5c6d7e8f9a0b",
+        ] {
+            assert_eq!(transcript_file_name(hostile), None, "accepted {hostile:?}");
+        }
+    }
+
+    #[test]
+    fn a_rejected_id_yields_no_path_and_no_writer() {
+        let store = TranscriptStore::new(PathBuf::from("/tmp/agent-logs"));
+        assert!(store.path_for("../escape").is_none());
+        assert_eq!(
+            store.path_for(A_UUID),
+            Some(PathBuf::from(format!("/tmp/agent-logs/{A_UUID}.log")))
+        );
+    }
+
+    #[test]
+    fn only_our_own_log_files_are_recognised() {
+        assert_eq!(
+            transcript_id_from_file_name(&format!("{A_UUID}.log")),
+            Some(A_UUID.to_string())
+        );
+        // A half-written compaction and anything else in the directory are not
+        // sessions and must not be reported as transcripts.
+        assert_eq!(transcript_id_from_file_name(&format!("{A_UUID}.log.tmp")), None);
+        assert_eq!(transcript_id_from_file_name("notes.txt"), None);
+        assert_eq!(transcript_id_from_file_name(".log"), None);
+    }
+
+    #[test]
+    fn the_transcript_directory_sits_beside_the_database() {
+        assert_eq!(
+            transcript_dir_for_database_url(
+                "file:/Users/x/Library/Application Support/KlustrEye/klustreye.db"
+            ),
+            PathBuf::from("/Users/x/Library/Application Support/KlustrEye/agent-logs")
+        );
+        assert_eq!(
+            transcript_dir_for_database_url("sqlite:///tmp/t/klustreye.db?mode=rwc"),
+            PathBuf::from("/tmp/t/agent-logs")
+        );
+        // No directory part: relative to the working directory, which is what
+        // a bare database filename already asked for.
+        assert_eq!(
+            transcript_dir_for_database_url("klustreye.db"),
+            PathBuf::from("./agent-logs")
+        );
+    }
+
+    // -- transcript truncation ---------------------------------------------
+
+    #[test]
+    fn truncation_keeps_the_newest_bytes() {
+        // Same rule as the in-memory ring: reading an archived session must
+        // show how it ended, not how it began.
+        assert_eq!(tail_bytes(b"0123456789", 4), b"6789");
+        assert_eq!(tail_bytes(b"0123456789", 10), b"0123456789");
+        assert_eq!(tail_bytes(b"0123456789", 99), b"0123456789");
+        assert_eq!(tail_bytes(b"", 8), b"");
+        assert_eq!(tail_bytes(b"0123456789", 0), b"");
+    }
+
+    #[test]
+    fn truncation_happens_only_past_the_slack() {
+        // Compacting on the first byte over the cap would copy a megabyte per
+        // flush for the rest of the session.
+        assert!(!needs_compaction(TRANSCRIPT_CAP, TRANSCRIPT_CAP, TRANSCRIPT_SLACK));
+        assert!(!needs_compaction(
+            TRANSCRIPT_CAP + TRANSCRIPT_SLACK,
+            TRANSCRIPT_CAP,
+            TRANSCRIPT_SLACK
+        ));
+        assert!(needs_compaction(
+            TRANSCRIPT_CAP + TRANSCRIPT_SLACK + 1,
+            TRANSCRIPT_CAP,
+            TRANSCRIPT_SLACK
+        ));
+    }
+
+    #[test]
+    fn compaction_leaves_a_file_at_the_cap_not_at_the_slack() {
+        // A runaway agent is bounded by the cap, not by cap+slack: the rewrite
+        // drops everything above the cap in one go.
+        let runaway = vec![b'x'; TRANSCRIPT_CAP + TRANSCRIPT_SLACK + 4096];
+        assert_eq!(tail_bytes(&runaway, TRANSCRIPT_CAP).len(), TRANSCRIPT_CAP);
+    }
+
+    // -- retention ---------------------------------------------------------
+
+    fn rows(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
+        pairs
+            .iter()
+            .map(|(ws, id)| (ws.to_string(), id.to_string()))
+            .collect()
+    }
+
+    #[test]
+    fn nothing_is_pruned_below_the_cap() {
+        let sessions = rows(&[("ws1", "s3"), ("ws1", "s2"), ("ws1", "s1")]);
+        assert!(sessions_to_prune(&sessions, 3).is_empty());
+        assert!(sessions_to_prune(&sessions, 200).is_empty());
+        assert!(sessions_to_prune(&[], 200).is_empty());
+    }
+
+    #[test]
+    fn the_oldest_sessions_past_the_cap_are_pruned() {
+        // Input is newest first, so the tail is the oldest — those go.
+        let sessions = rows(&[("ws1", "s4"), ("ws1", "s3"), ("ws1", "s2"), ("ws1", "s1")]);
+        assert_eq!(sessions_to_prune(&sessions, 2), vec!["s2", "s1"]);
+        assert_eq!(sessions_to_prune(&sessions, 1), vec!["s3", "s2", "s1"]);
+    }
+
+    #[test]
+    fn the_cap_is_per_workspace_not_global() {
+        // Otherwise one busy workspace would evict another's history — the
+        // rule has to be one a user can predict from their own workspace.
+        let sessions = rows(&[
+            ("ws1", "a3"),
+            ("ws1", "a2"),
+            ("ws1", "a1"),
+            ("ws2", "b2"),
+            ("ws2", "b1"),
+        ]);
+        assert_eq!(sessions_to_prune(&sessions, 2), vec!["a1"]);
+        assert_eq!(sessions_to_prune(&sessions, 1), vec!["a2", "a1", "b1"]);
+    }
+
+    #[test]
+    fn a_zero_cap_prunes_everything() {
+        let sessions = rows(&[("ws1", "a2"), ("ws1", "a1")]);
+        assert_eq!(sessions_to_prune(&sessions, 0), vec!["a2", "a1"]);
+    }
+
+    #[test]
+    fn a_registry_without_transcripts_has_no_store() {
+        assert!(AgentRegistry::new().transcripts().is_none());
+        let with = AgentRegistry::with_transcripts(PathBuf::from("/tmp/agent-logs"));
+        assert_eq!(
+            with.transcripts().map(|s| s.dir().to_path_buf()),
+            Some(PathBuf::from("/tmp/agent-logs"))
+        );
     }
 
     #[test]

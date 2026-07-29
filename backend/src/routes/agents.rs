@@ -310,7 +310,12 @@ const SESSION_COLS: &str = "id, workspace_id, definition_id, title, cwd, status,
 /// reports `exited` — after a server restart the PTY is gone for good, and
 /// reporting a dead session as `waiting` forever would be a lie the UI would
 /// draw an icon for.
-fn session_to_json(row: &AgentSessionRow, state: &AppState) -> Value {
+///
+/// `hasTranscript` is what lets the UI tell "archived, readable" from "gone":
+/// an exited session with a transcript still opens and shows what it did, one
+/// without it can only say so. It is passed in rather than looked up here so a
+/// list of sessions costs one directory read instead of one stat per row.
+fn session_to_json(row: &AgentSessionRow, state: &AppState, has_transcript: bool) -> Value {
     let (status, exit_code, activity, waiting_confidence) = match state.agents.get(&row.id) {
         Some(session) => {
             let info = session.info();
@@ -339,10 +344,20 @@ fn session_to_json(row: &AgentSessionRow, state: &AppState) -> Value {
         "exitCode": exit_code,
         "activity": activity,
         "waitingConfidence": waiting_confidence,
+        "hasTranscript": has_transcript,
         "createdAt": row.created_at,
         "lastActivityAt": row.last_activity_at,
         "exitedAt": row.exited_at,
     })
+}
+
+/// Whether one session has a stored transcript — a single stat, for the
+/// endpoints that answer with a single session.
+async fn has_transcript(state: &AppState, id: &str) -> bool {
+    match state.agents.transcripts() {
+        Some(store) => store.has(id).await,
+        None => false,
+    }
 }
 
 async fn fetch_session_row(db: &sqlx::SqlitePool, id: &str) -> Result<AgentSessionRow> {
@@ -368,9 +383,15 @@ pub async fn list_agent_sessions(
     .fetch_all(&state.db)
     .await?;
 
+    // One directory read for the whole page, not one stat per row.
+    let transcripts = match state.agents.transcripts() {
+        Some(store) => store.list_ids().await,
+        None => std::collections::HashSet::new(),
+    };
+
     Ok(Json(json!(rows
         .iter()
-        .map(|row| session_to_json(row, &state))
+        .map(|row| session_to_json(row, &state, transcripts.contains(&row.id)))
         .collect::<Vec<_>>())))
 }
 
@@ -440,7 +461,8 @@ pub async fn create_agent_session(
         .await?;
 
     let row = fetch_session_row(&state.db, &info.id).await?;
-    Ok(Json(session_to_json(&row, &state)))
+    let transcript = has_transcript(&state, &info.id).await;
+    Ok(Json(session_to_json(&row, &state, transcript)))
 }
 
 /// Renames a session — permanently.
@@ -477,7 +499,8 @@ pub async fn rename_agent_session(
     }
 
     let row = fetch_session_row(&state.db, &id).await?;
-    Ok(Json(session_to_json(&row, &state)))
+    let transcript = has_transcript(&state, &id).await;
+    Ok(Json(session_to_json(&row, &state, transcript)))
 }
 
 /// Kills the session's process group and marks the row exited.

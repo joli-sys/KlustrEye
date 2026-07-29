@@ -98,7 +98,25 @@ pub async fn start_server(port: u16, database_url: &str) -> anyhow::Result<()> {
     }
 
     let port_forwards = k8s::port_forward::new_processes();
-    let agents = AgentRegistry::new();
+
+    // Agent transcripts live beside the database, in the same app-data
+    // directory, so a session that ran before this process started can still be
+    // read. Pruned here, on the way up, rather than on a timer: it is the one
+    // moment nothing is attached and every session is known to have exited.
+    let transcript_dir = agents::transcript_dir_for_database_url(database_url);
+    let agents = AgentRegistry::with_transcripts(transcript_dir);
+    match agents::prune_agent_sessions(
+        &db,
+        agents.transcripts(),
+        agents::TRANSCRIPT_RETENTION_PER_WORKSPACE,
+    )
+    .await
+    {
+        Ok(0) => {}
+        Ok(n) => tracing::info!("pruned {n} old agent session(s) past the retention limit"),
+        // Retention is housekeeping; failing it must not stop the server.
+        Err(e) => tracing::warn!(error = %e, "failed to prune old agent sessions"),
+    }
 
     let state = AppState {
         db: db.clone(),

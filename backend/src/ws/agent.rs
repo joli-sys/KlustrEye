@@ -25,15 +25,33 @@ use axum::extract::ws::{Message, WebSocket};
 use futures::{SinkExt, StreamExt};
 use tokio::sync::broadcast::error::RecvError;
 
-use crate::agents::{AgentRegistry, SessionStatus};
+use crate::agents::{AgentRegistry, SessionStatus, TranscriptStore};
 use crate::error::{AppError, Result};
 use crate::AppState;
 
-/// Shown when a row survives in `agent_sessions` but its PTY does not — the
-/// server restarted, or the session was deleted. There is nothing to replay, so
-/// say why instead of leaving a blank terminal.
+/// Shown when a row survives in `agent_sessions` but neither its PTY nor a
+/// transcript does — a session from before transcripts were recorded, or one
+/// whose log could not be written. There is nothing to replay, so say why
+/// instead of leaving a blank terminal.
 const GONE_NOTICE: &str =
     "\r\n\x1b[33m[this agent session is no longer running and its output is gone]\x1b[0m\r\n";
+
+/// Closes an archived replay. Deliberately after the transcript rather than
+/// before it: the user came for the output, and a header would push the last
+/// thing the agent said further up the scroll.
+const ARCHIVED_NOTICE: &str =
+    "\r\n\x1b[33m[end of archived transcript — this session's process is gone]\x1b[0m\r\n";
+
+/// A transcript exists and is empty: the session ran and printed nothing. A
+/// different fact from having no record at all, and worth distinguishing —
+/// otherwise a silent agent looks like a lost one.
+const EMPTY_NOTICE: &str =
+    "\r\n\x1b[33m[archived transcript is empty — this session produced no output]\x1b[0m\r\n";
+
+/// How much of an archived transcript goes into one WebSocket message. The file
+/// can be a megabyte; a single frame that size is needlessly hostile to the
+/// client for no gain.
+const REPLAY_CHUNK_BYTES: usize = 64 * 1024;
 
 /// Rejects an unknown session id *before* the upgrade.
 ///
@@ -59,7 +77,10 @@ pub async fn handle_agent(socket: WebSocket, registry: AgentRegistry, session_id
     let mut socket = socket;
 
     let Some(session) = registry.get(&session_id) else {
-        let _ = socket.send(Message::Text(GONE_NOTICE.to_string())).await;
+        // No live PTY. The registry is empty on boot, so this is the ordinary
+        // path for every session that predates the current server process —
+        // and the one the on-disk transcript exists for.
+        replay_archived(&mut socket, registry.transcripts(), &session_id).await;
         let _ = socket.send(Message::Close(None)).await;
         return;
     };
@@ -157,6 +178,48 @@ pub async fn handle_agent(socket: WebSocket, registry: AgentRegistry, session_id
         _ = &mut forward => input.abort(),
         _ = &mut input => forward.abort(),
     }
+}
+
+/// Streams a session's stored transcript, then says what it was.
+///
+/// Read-only and terminal: there is no process to send input to, so the socket
+/// is closed by the caller as soon as this returns.
+async fn replay_archived(
+    socket: &mut WebSocket,
+    store: Option<&TranscriptStore>,
+    session_id: &str,
+) {
+    let transcript = match store {
+        Some(store) => store.read(session_id).await,
+        None => None,
+    };
+
+    let Some(bytes) = transcript else {
+        let _ = socket.send(Message::Text(GONE_NOTICE.to_string())).await;
+        return;
+    };
+
+    if bytes.is_empty() {
+        let _ = socket.send(Message::Text(EMPTY_NOTICE.to_string())).await;
+        return;
+    }
+
+    // Same carry as the live path: the file is bytes, and its cap truncates
+    // without regard for codepoint boundaries.
+    let mut carry: Vec<u8> = Vec::new();
+    for chunk in bytes.chunks(REPLAY_CHUNK_BYTES) {
+        carry.extend_from_slice(chunk);
+        let (text, rest) = decode_carrying_partial(&carry);
+        carry = rest;
+        if text.is_empty() {
+            continue;
+        }
+        if socket.send(Message::Text(text)).await.is_err() {
+            return;
+        }
+    }
+
+    let _ = socket.send(Message::Text(ARCHIVED_NOTICE.to_string())).await;
 }
 
 fn exit_notice(code: Option<i32>) -> String {
@@ -306,5 +369,18 @@ mod tests {
     fn exit_notice_names_the_code_when_known() {
         assert!(exit_notice(Some(137)).contains("code 137"));
         assert!(exit_notice(None).contains("exited"));
+    }
+
+    #[test]
+    fn no_record_and_an_empty_record_read_differently() {
+        // "we never kept this" and "it ran and said nothing" are different
+        // facts, and the second must not look like a bug in the first.
+        assert_ne!(GONE_NOTICE, EMPTY_NOTICE);
+        assert!(GONE_NOTICE.contains("output is gone"));
+        assert!(EMPTY_NOTICE.contains("produced no output"));
+        // The archived notice has to say the process is gone: everything above
+        // it is old output, and it must not read as a live session.
+        assert!(ARCHIVED_NOTICE.contains("archived"));
+        assert!(ARCHIVED_NOTICE.contains("gone"));
     }
 }
