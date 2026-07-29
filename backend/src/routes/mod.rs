@@ -133,7 +133,8 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/workspaces/:ws_id/agent-sessions",
             get(agents::list_agent_sessions).post(agents::create_agent_session))
         .route("/api/agent-sessions/:id",
-            delete(agents::delete_agent_session))
+            put(agents::rename_agent_session)
+            .delete(agents::delete_agent_session))
         // Settings
         .route("/api/settings/kubeconfig",
             get(settings::get_kubeconfig).put(settings::set_kubeconfig))

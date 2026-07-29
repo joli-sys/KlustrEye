@@ -257,6 +257,9 @@ pub struct AgentSessionBody {
     pub definition_id: String,
     #[serde(default)]
     pub title: Option<String>,
+    /// Where to run. Optional — absent means the workspace's bound folder.
+    #[serde(default)]
+    pub cwd: Option<String>,
     /// Initial PTY geometry. Optional — the client resizes on attach anyway,
     /// but starting at the right size stops the first frame being reflowed.
     #[serde(default)]
@@ -265,12 +268,29 @@ pub struct AgentSessionBody {
     pub cols: Option<u16>,
 }
 
+#[derive(Deserialize)]
+pub struct AgentSessionRenameBody {
+    pub title: String,
+}
+
+/// A session title the user typed. Whitespace-only is a slip, not a name.
+pub fn validate_session_title(title: &str) -> std::result::Result<String, String> {
+    let trimmed = title.trim();
+    if trimmed.is_empty() {
+        return Err("title is required".to_string());
+    }
+    Ok(trimmed.to_string())
+}
+
 #[derive(sqlx::FromRow)]
 struct AgentSessionRow {
     id: String,
     workspace_id: String,
     definition_id: Option<String>,
     title: String,
+    /// NULL for rows written before per-session working directories existed;
+    /// those ran in their workspace's folder, which we cannot reconstruct.
+    cwd: Option<String>,
     status: String,
     exit_code: Option<i64>,
     created_at: String,
@@ -278,7 +298,7 @@ struct AgentSessionRow {
     exited_at: Option<String>,
 }
 
-const SESSION_COLS: &str = "id, workspace_id, definition_id, title, status, exit_code, \
+const SESSION_COLS: &str = "id, workspace_id, definition_id, title, cwd, status, exit_code, \
                             created_at, last_activity_at, exited_at";
 
 /// The table is the durable record, but a session that has just exited may not
@@ -314,6 +334,7 @@ fn session_to_json(row: &AgentSessionRow, state: &AppState) -> Value {
         "workspaceId": row.workspace_id,
         "definitionId": row.definition_id,
         "title": row.title,
+        "cwd": row.cwd,
         "status": status,
         "exitCode": exit_code,
         "activity": activity,
@@ -353,12 +374,14 @@ pub async fn list_agent_sessions(
         .collect::<Vec<_>>())))
 }
 
-/// Starts an agent in the workspace's bound folder.
+/// Starts an agent in an explicit `cwd`, or in the workspace's bound folder
+/// when none is given.
 ///
-/// The workspace checks — bound folder present, folder still on disk — live in
-/// `agents::resolve_workspace_cwd` and run inside `spawn_session`, so there is
-/// exactly one place that can decide where an agent runs. `AgentError`'s
-/// `From` impl maps them to 404/400, and the live-session cap to 429.
+/// Every check — workspace exists, somewhere to run, that somewhere is a
+/// directory — lives in `agents::resolve_session_cwd` and runs inside
+/// `spawn_session`, so there is exactly one place that can decide where an agent
+/// runs. `AgentError`'s `From` impl maps them to 404/400, and the live-session
+/// cap to 429.
 pub async fn create_agent_session(
     Path(ws_id): Path<String>,
     State(state): State<AppState>,
@@ -380,11 +403,16 @@ pub async fn create_agent_session(
     let prompt_patterns: Vec<String> =
         serde_json::from_str(&definition.prompt_patterns).unwrap_or_default();
 
-    let title = body
+    // A title supplied here is the user's own words, so it counts as custom and
+    // suppresses auto-titling from the start. Falling back to the definition's
+    // name is the default that auto-titling is allowed to improve on.
+    let requested_title = body
         .title
         .as_deref()
         .map(str::trim)
-        .filter(|t| !t.is_empty())
+        .filter(|t| !t.is_empty());
+    let title_is_custom = requested_title.is_some();
+    let title = requested_title
         .unwrap_or(definition.name.as_str())
         .to_string();
 
@@ -399,6 +427,8 @@ pub async fn create_agent_session(
                 workspace_id: ws_id,
                 definition_id: Some(definition.id),
                 title,
+                title_is_custom,
+                cwd: body.cwd,
                 program: definition.command,
                 args,
                 env,
@@ -410,6 +440,43 @@ pub async fn create_agent_session(
         .await?;
 
     let row = fetch_session_row(&state.db, &info.id).await?;
+    Ok(Json(session_to_json(&row, &state)))
+}
+
+/// Renames a session — permanently.
+///
+/// Setting `title_is_custom` is the point of the write, not a detail of it: the
+/// auto-titler in `agents::start_pty` keys off that column and gives this
+/// session up for good. A name the user chose drifting back to whatever the
+/// agent last printed would be the same class of bug as refetching a file over
+/// unsaved edits.
+pub async fn rename_agent_session(
+    Path(id): Path<String>,
+    State(state): State<AppState>,
+    Json(body): Json<AgentSessionRenameBody>,
+) -> Result<Json<Value>> {
+    let title = validate_session_title(&body.title).map_err(AppError::BadRequest)?;
+
+    let res = sqlx::query("UPDATE agent_sessions SET title = ?, title_is_custom = 1 WHERE id = ?")
+        .bind(&title)
+        .bind(&id)
+        .execute(&state.db)
+        .await?;
+
+    // `rows_affected` answers "does this id exist" without a second query, and
+    // an unknown id is a 404 rather than a 500.
+    if res.rows_affected() == 0 {
+        return Err(AppError::NotFound(format!("agent session {id} not found")));
+    }
+
+    // Renaming an old session is legitimate: it has a row but no PTY, and the
+    // row is what the API reports. A live session gets its in-memory copy
+    // updated too, which also latches its auto-titler off immediately.
+    if let Some(session) = state.agents.get(&id) {
+        session.set_custom_title(&title);
+    }
+
+    let row = fetch_session_row(&state.db, &id).await?;
     Ok(Json(session_to_json(&row, &state)))
 }
 
@@ -529,6 +596,21 @@ mod tests {
     fn an_uncompilable_prompt_pattern_is_rejected_at_the_boundary() {
         let err = validate_prompt_patterns(Some(&json!(["(unclosed"]))).unwrap_err();
         assert!(err.contains("invalid prompt pattern"));
+    }
+
+    #[test]
+    fn rejects_a_blank_session_title() {
+        assert!(validate_session_title("").is_err());
+        assert!(validate_session_title("   ").is_err());
+        assert!(validate_session_title("\t\n").is_err());
+    }
+
+    #[test]
+    fn a_session_title_is_stored_trimmed() {
+        assert_eq!(
+            validate_session_title("  Refactor the parser  "),
+            Ok("Refactor the parser".to_string())
+        );
     }
 
     #[test]

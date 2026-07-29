@@ -82,13 +82,18 @@ pub enum AgentError {
     NotFound(String),
     #[error("workspace '{0}' not found")]
     WorkspaceNotFound(String),
-    /// A workspace with no folder bound has nowhere to run. We never fall back
-    /// to `$HOME`: an agent silently operating on the wrong tree is worse than
-    /// an agent that refuses to start.
-    #[error("workspace '{0}' has no folder bound — bind a folder before starting an agent")]
-    NoWorkspaceFolder(String),
+    /// Nothing said where to run: no `cwd` on the request and no folder bound
+    /// to the workspace. We never fall back to `$HOME` — an agent silently
+    /// operating on the wrong tree is worse than one that refuses to start.
+    #[error(
+        "workspace '{0}' has no folder bound and no cwd was given — \
+         bind a folder or pass an explicit cwd"
+    )]
+    NoCwd(String),
     #[error("workspace folder '{0}' is not an existing directory")]
     WorkspaceFolderMissing(String),
+    #[error("cwd '{0}' is not an existing directory")]
+    CwdMissing(String),
     #[error("agent command is empty")]
     EmptyCommand,
     #[error("too many live agent sessions ({max} max) — stop one before starting another")]
@@ -105,8 +110,9 @@ impl From<AgentError> for AppError {
             AgentError::NotFound(_) | AgentError::WorkspaceNotFound(_) => {
                 AppError::NotFound(e.to_string())
             }
-            AgentError::NoWorkspaceFolder(_)
+            AgentError::NoCwd(_)
             | AgentError::WorkspaceFolderMissing(_)
+            | AgentError::CwdMissing(_)
             | AgentError::EmptyCommand => AppError::BadRequest(e.to_string()),
             AgentError::CapacityExceeded { .. } => AppError::TooManyRequests(e.to_string()),
             AgentError::Spawn(_) => AppError::Internal(e.to_string()),
@@ -266,29 +272,76 @@ pub async fn resolve_kubeconfig_path(db: &SqlitePool) -> Option<String> {
     .or_else(|| std::env::var("KUBECONFIG_PATH").ok())
 }
 
-/// Resolves a workspace's bound folder into a confirmed directory.
+/// Where a session's working directory came from, so a failure names the right
+/// thing back to the user.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CwdChoice {
+    /// A `cwd` supplied on the request.
+    Explicit(String),
+    /// The workspace's bound folder — the default when no `cwd` is given.
+    WorkspaceFolder(String),
+}
+
+impl CwdChoice {
+    pub fn path(&self) -> &str {
+        match self {
+            CwdChoice::Explicit(p) | CwdChoice::WorkspaceFolder(p) => p,
+        }
+    }
+}
+
+/// Picks a session's working directory: an explicit `cwd` wins over the
+/// workspace's bound folder, and a blank string on either side counts as
+/// absent. `None` means nothing said where to run.
+///
+/// The workspace folder was never a confinement boundary for agents — the user
+/// already supplies the command, which runs with their full privileges — so an
+/// explicit `cwd` outside it is the feature, not a hole. (The filesystem API in
+/// `fs/mod.rs` confines paths for entirely separate reasons.)
+pub fn choose_cwd(explicit: Option<&str>, workspace_folder: Option<&str>) -> Option<CwdChoice> {
+    fn nonblank(s: &str) -> Option<String> {
+        let trimmed = s.trim();
+        (!trimmed.is_empty()).then(|| trimmed.to_string())
+    }
+
+    if let Some(path) = explicit.and_then(nonblank) {
+        return Some(CwdChoice::Explicit(path));
+    }
+    workspace_folder.and_then(nonblank).map(CwdChoice::WorkspaceFolder)
+}
+
+/// Resolves a session's working directory into a confirmed directory.
 ///
 /// Uses `tokio::fs` — this runs on request paths and `std::fs::metadata` would
 /// block the executor.
-pub async fn resolve_workspace_cwd(
+pub async fn resolve_session_cwd(
     db: &SqlitePool,
     workspace_id: &str,
+    explicit: Option<&str>,
 ) -> Result<PathBuf, AgentError> {
+    // The workspace must exist even when the caller brought its own `cwd`: the
+    // session row is scoped to it, and a session hanging off a workspace that
+    // is not there could never be listed.
     let folder: Option<Option<String>> =
         sqlx::query_scalar("SELECT folder_path FROM workspaces WHERE id = ?")
             .bind(workspace_id)
             .fetch_optional(db)
             .await?;
 
-    let folder = folder
-        .ok_or_else(|| AgentError::WorkspaceNotFound(workspace_id.to_string()))?
-        .filter(|p| !p.trim().is_empty())
-        .ok_or_else(|| AgentError::NoWorkspaceFolder(workspace_id.to_string()))?;
+    let folder = folder.ok_or_else(|| AgentError::WorkspaceNotFound(workspace_id.to_string()))?;
 
-    let path = PathBuf::from(&folder);
+    let choice = choose_cwd(explicit, folder.as_deref())
+        .ok_or_else(|| AgentError::NoCwd(workspace_id.to_string()))?;
+
+    let path = PathBuf::from(choice.path());
     match tokio::fs::metadata(&path).await {
         Ok(meta) if meta.is_dir() => {}
-        _ => return Err(AgentError::WorkspaceFolderMissing(folder)),
+        _ => {
+            return Err(match choice {
+                CwdChoice::Explicit(p) => AgentError::CwdMissing(p),
+                CwdChoice::WorkspaceFolder(p) => AgentError::WorkspaceFolderMissing(p),
+            })
+        }
     }
 
     // Canonicalize so the child's cwd does not depend on the server's cwd or on
@@ -429,6 +482,168 @@ impl PromptPatterns {
 }
 
 // ---------------------------------------------------------------------------
+// Auto-title (pure — see tests)
+// ---------------------------------------------------------------------------
+
+/// Longest auto-derived title, in characters. A tab strip has no room for more.
+pub const AUTO_TITLE_MAX_CHARS: usize = 60;
+
+/// How many opening bytes are examined for a title. The interesting line is the
+/// first one an agent prints; past this the session is well under way and a
+/// title taken from it would describe a random moment, not the session.
+pub const AUTO_TITLE_SCAN_BYTES: usize = 4096;
+
+/// How long after spawn auto-titling may still fire. Bounded so a session
+/// cannot be silently renamed minutes in, long after the user has looked at it.
+pub const AUTO_TITLE_WINDOW: Duration = Duration::from_secs(5);
+
+/// Alphanumerics a line needs before it can be a title. Two is too easy for a
+/// spinner frame with a label; three still admits any real sentence.
+const MIN_TITLE_ALPHANUMERICS: usize = 3;
+
+/// Removes ANSI escape sequences and the remaining C0 controls.
+///
+/// Hand-written rather than regex-based because the shapes are few and fixed:
+/// CSI (`ESC [` … final byte in `@`–`~`), OSC (`ESC ]` … BEL or ST), and the
+/// two-character escapes. A byte window may also begin mid-sequence, so an
+/// unterminated escape simply consumes the rest of the line.
+pub fn strip_ansi(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    let mut chars = input.chars().peekable();
+
+    while let Some(c) = chars.next() {
+        if c != '\u{1b}' {
+            // A tab is whitespace and survives as a space; every other control
+            // character carries no text.
+            if c == '\t' {
+                out.push(' ');
+            } else if !c.is_control() {
+                out.push(c);
+            }
+            continue;
+        }
+
+        match chars.next() {
+            Some('[') => {
+                for c in chars.by_ref() {
+                    if ('\u{40}'..='\u{7e}').contains(&c) {
+                        break;
+                    }
+                }
+            }
+            Some(']') => {
+                while let Some(c) = chars.next() {
+                    if c == '\u{7}' {
+                        break;
+                    }
+                    if c == '\u{1b}' {
+                        if chars.peek() == Some(&'\\') {
+                            chars.next();
+                        }
+                        break;
+                    }
+                }
+            }
+            // Two-character escape (or a truncated one): both chars are gone.
+            _ => {}
+        }
+    }
+    out
+}
+
+/// Characters that carry no meaning at the edge of a line: whitespace, box
+/// drawing, block and geometric shapes, braille (spinner frames), and the
+/// punctuation banners are ruled and bulleted with.
+///
+/// Deliberately narrow. `/`, `\` and `.` are NOT here: trimming them would turn
+/// a first line of `/srv/app` into `srv/app` and `.gitignore updated` into
+/// `gitignore updated`. Decoration made only of them has no alphanumerics
+/// either way, so [`MIN_TITLE_ALPHANUMERICS`] already rejects it.
+fn is_decoration(c: char) -> bool {
+    c.is_whitespace()
+        || matches!(c,
+            '\u{2500}'..='\u{257f}'   // box drawing
+            | '\u{2580}'..='\u{259f}' // block elements
+            | '\u{25a0}'..='\u{25ff}' // geometric shapes
+            | '\u{2600}'..='\u{27bf}' // misc symbols & dingbats
+            | '\u{2800}'..='\u{28ff}' // braille
+        )
+        || "*#=-_~+|<>•·".contains(c)
+}
+
+fn alphanumeric_count(s: &str) -> usize {
+    s.chars().filter(|c| c.is_alphanumeric()).count()
+}
+
+fn truncate_title(s: &str) -> String {
+    if s.chars().count() <= AUTO_TITLE_MAX_CHARS {
+        return s.to_string();
+    }
+    // Char-wise, never byte-wise: agents print box-drawn UI and emoji, and a
+    // byte slice would land mid-codepoint.
+    let kept: String = s.chars().take(AUTO_TITLE_MAX_CHARS - 1).collect();
+    format!("{}…", kept.trim_end())
+}
+
+/// Derives a session title from the opening bytes of its output, or `None` when
+/// nothing there is worth showing.
+///
+/// Best effort by design: a bad title is worse than the default, so anything
+/// ambiguous is skipped rather than guessed at. Skipped outright are
+/// unterminated lines (the tail of a live stream is usually half-written) and
+/// lines that are pure decoration — box rules, spinner frames, and the ASCII-art
+/// banners agents open with, none of which survive stripping their edges down to
+/// [`MIN_TITLE_ALPHANUMERICS`] alphanumerics.
+pub fn extract_auto_title(output: &[u8]) -> Option<String> {
+    // Lossy: `output` is a byte window that may start or end mid-codepoint.
+    let text = String::from_utf8_lossy(output);
+
+    // `\r` terminates a line too — TUI agents redraw a status line without ever
+    // emitting `\n`.
+    let mut lines: Vec<&str> = text.split(['\n', '\r']).collect();
+    // Drop the trailing segment: nothing has terminated it yet, so it may be a
+    // fragment. Titling a session "Reading src/ma" would be worse than nothing.
+    lines.pop();
+
+    for line in lines {
+        let cleaned = strip_ansi(line);
+        let trimmed = cleaned.trim_matches(is_decoration);
+        if alphanumeric_count(trimmed) < MIN_TITLE_ALPHANUMERICS {
+            continue;
+        }
+        return Some(truncate_title(trimmed));
+    }
+    None
+}
+
+/// Writes an auto-derived title — but only while the row still says the title
+/// is the default.
+///
+/// The `title_is_custom = 0` predicate is the real guard, not the check the
+/// caller already made: a rename landing between the two must still win, and
+/// the row is what the API reports. The in-memory copy is only touched when the
+/// write took effect AND the latch is still clear, so a concurrent rename can
+/// never be undone in either place.
+async fn apply_auto_title(
+    db: &SqlitePool,
+    id: &str,
+    title: &Arc<Mutex<String>>,
+    title_is_custom: &Arc<std::sync::atomic::AtomicBool>,
+    derived: &str,
+) {
+    let result = sqlx::query("UPDATE agent_sessions SET title = ? WHERE id = ? AND title_is_custom = 0")
+        .bind(derived)
+        .bind(id)
+        .execute(db)
+        .await;
+
+    let applied = matches!(result, Ok(ref r) if r.rows_affected() == 1);
+    if applied && !title_is_custom.load(std::sync::atomic::Ordering::SeqCst) {
+        *title.lock().expect("title mutex") = derived.to_string();
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Session
 // ---------------------------------------------------------------------------
 
@@ -473,7 +688,17 @@ pub struct AgentSession {
     pub id: String,
     pub workspace_id: String,
     pub definition_id: Option<String>,
-    pub title: String,
+    /// Where the process was started. Resolved once at spawn (see
+    /// [`resolve_session_cwd`]) and never re-derived.
+    pub cwd: PathBuf,
+
+    /// Mutable because both the user (rename) and the auto-titler write it.
+    title: Arc<Mutex<String>>,
+
+    /// Set once the user names the session, and never cleared. This is the
+    /// latch that keeps a chosen title from drifting back to whatever the agent
+    /// last printed — the auto-titler checks it and gives up for good.
+    title_is_custom: Arc<std::sync::atomic::AtomicBool>,
 
     /// Guards the scrollback *and* the ordering of `output_tx.send`. The pump
     /// holds it across push+broadcast and `attach` holds it across
@@ -509,6 +734,18 @@ pub struct AgentSession {
 }
 
 impl AgentSession {
+    pub fn title(&self) -> String {
+        self.title.lock().expect("title mutex").clone()
+    }
+
+    /// Records a title the user chose. Irreversible on purpose: from here on
+    /// the auto-titler skips this session entirely.
+    pub fn set_custom_title(&self, title: &str) {
+        self.title_is_custom
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        *self.title.lock().expect("title mutex") = title.to_string();
+    }
+
     pub fn status(&self) -> SessionStatus {
         self.status.lock().expect("status mutex").clone()
     }
@@ -560,7 +797,7 @@ impl AgentSession {
             id: self.id.clone(),
             workspace_id: self.workspace_id.clone(),
             definition_id: self.definition_id.clone(),
-            title: self.title.clone(),
+            title: self.title(),
             status: status.as_str().to_string(),
             exit_code: match status {
                 SessionStatus::Exited { code } => code,
@@ -668,6 +905,13 @@ pub struct SpawnRequest {
     pub workspace_id: String,
     pub definition_id: Option<String>,
     pub title: String,
+    /// True when `title` is the user's own words rather than the definition's
+    /// name. Suppresses auto-titling from the very first byte — a title the
+    /// user typed is already the best one available.
+    pub title_is_custom: bool,
+    /// Where to run. `None` means "the workspace's bound folder"; see
+    /// [`choose_cwd`].
+    pub cwd: Option<String>,
     pub program: String,
     pub args: Vec<String>,
     pub env: Vec<(String, String)>,
@@ -772,7 +1016,7 @@ impl AgentRegistry {
         db: &SqlitePool,
         req: SpawnRequest,
     ) -> Result<AgentSessionInfo, AgentError> {
-        let cwd = resolve_workspace_cwd(db, &req.workspace_id).await?;
+        let cwd = resolve_session_cwd(db, &req.workspace_id, req.cwd.as_deref()).await?;
         let kubeconfig = resolve_kubeconfig_path(db).await;
         let plan = build_spawn_plan(
             &req.program,
@@ -792,15 +1036,21 @@ impl AgentRegistry {
         let id = Uuid::new_v4().to_string();
         let session = self.start_pty(db, &id, &req, &plan)?;
 
+        // The resolved cwd is persisted, not re-derived on read: it is where
+        // this session actually ran, and several sessions in one workspace are
+        // otherwise indistinguishable.
         sqlx::query(
             "INSERT INTO agent_sessions
-             (id, workspace_id, definition_id, title, status, created_at, last_activity_at)
-             VALUES (?, ?, ?, ?, 'running', datetime('now'), datetime('now'))",
+             (id, workspace_id, definition_id, title, title_is_custom, cwd,
+              status, created_at, last_activity_at)
+             VALUES (?, ?, ?, ?, ?, ?, 'running', datetime('now'), datetime('now'))",
         )
         .bind(&id)
         .bind(&req.workspace_id)
         .bind(&req.definition_id)
         .bind(&req.title)
+        .bind(i64::from(req.title_is_custom))
+        .bind(plan.cwd.to_string_lossy().as_ref())
         .execute(db)
         .await
         .inspect_err(|_| session.kill())?;
@@ -856,12 +1106,16 @@ impl AgentRegistry {
         let (output_tx, _) = broadcast::channel::<Arc<[u8]>>(OUTPUT_CHANNEL_CAPACITY);
         let scrollback = Arc::new(Mutex::new(ScrollbackBuffer::new(SCROLLBACK_CAPACITY)));
         let last_output = Arc::new(Mutex::new(Instant::now()));
+        let title = Arc::new(Mutex::new(req.title.clone()));
+        let title_is_custom = Arc::new(std::sync::atomic::AtomicBool::new(req.title_is_custom));
 
         let session = Arc::new(AgentSession {
             id: id.to_string(),
             workspace_id: req.workspace_id.clone(),
             definition_id: req.definition_id.clone(),
-            title: req.title.clone(),
+            cwd: plan.cwd.clone(),
+            title: title.clone(),
+            title_is_custom: title_is_custom.clone(),
             scrollback: scrollback.clone(),
             output_tx: output_tx.clone(),
             writer: Arc::new(Mutex::new(writer)),
@@ -898,18 +1152,48 @@ impl AgentRegistry {
         let pump_id = id.to_string();
         tokio::spawn(async move {
             let mut last_touch: i64 = 0;
+            // Auto-title state. `opening` accumulates separately from the
+            // scrollback because the ring evicts from the FRONT — the first
+            // line an agent prints is exactly what a busy session loses first.
+            let mut opening: Vec<u8> = Vec::new();
+            let mut auto_title_pending = !title_is_custom.load(std::sync::atomic::Ordering::SeqCst);
+            let auto_title_deadline = Instant::now() + AUTO_TITLE_WINDOW;
+
             while let Some(chunk) = pty_rx.recv().await {
                 let chunk: Arc<[u8]> = chunk.into();
                 {
                     let mut sb = scrollback.lock().expect("scrollback mutex");
                     sb.push(&chunk);
-                    let _ = output_tx.send(chunk);
+                    let _ = output_tx.send(chunk.clone());
                 }
 
                 // The in-memory signal `activity` is derived from. Updated on
                 // every chunk (it is one monotonic clock read), unlike the
                 // throttled SQLite write below, which exists only for display.
                 *last_output.lock().expect("last_output mutex") = Instant::now();
+
+                if auto_title_pending {
+                    if opening.len() < AUTO_TITLE_SCAN_BYTES {
+                        let room = AUTO_TITLE_SCAN_BYTES - opening.len();
+                        opening.extend_from_slice(&chunk[..chunk.len().min(room)]);
+                    }
+
+                    auto_title_pending = if title_is_custom.load(std::sync::atomic::Ordering::SeqCst)
+                    {
+                        // The user renamed the session while it was starting.
+                        // Their title wins, permanently.
+                        false
+                    } else if let Some(derived) = extract_auto_title(&opening) {
+                        apply_auto_title(&pump_db, &pump_id, &title, &title_is_custom, &derived)
+                            .await;
+                        false
+                    } else {
+                        // Give up rather than keep watching: past the opening
+                        // window a title would describe a random later moment.
+                        opening.len() < AUTO_TITLE_SCAN_BYTES
+                            && Instant::now() < auto_title_deadline
+                    };
+                }
 
                 let now = chrono::Utc::now().timestamp();
                 if now - last_touch >= ACTIVITY_TOUCH_INTERVAL_SECS {
@@ -1131,12 +1415,230 @@ mod tests {
     }
 
     #[test]
-    fn missing_workspace_folder_maps_to_400_not_a_home_fallback() {
-        let err: AppError = AgentError::NoWorkspaceFolder("ws1".into()).into();
+    fn nowhere_to_run_maps_to_400_not_a_home_fallback() {
+        let err: AppError = AgentError::NoCwd("ws1".into()).into();
         match err {
-            AppError::BadRequest(msg) => assert!(msg.contains("bind a folder")),
+            AppError::BadRequest(msg) => {
+                // The message must name both ways out, since either fixes it.
+                assert!(msg.contains("bind a folder"));
+                assert!(msg.contains("explicit cwd"));
+            }
             other => panic!("expected BadRequest, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn a_missing_directory_maps_to_400_naming_the_path() {
+        // Which path failed is the whole content of the error — "not a
+        // directory" without the path leaves the user guessing.
+        let explicit: AppError = AgentError::CwdMissing("/tmp/gone".into()).into();
+        match explicit {
+            AppError::BadRequest(msg) => {
+                assert!(msg.contains("/tmp/gone"));
+                assert!(msg.contains("cwd"));
+            }
+            other => panic!("expected BadRequest, got {other:?}"),
+        }
+
+        let folder: AppError = AgentError::WorkspaceFolderMissing("/tmp/ws".into()).into();
+        match folder {
+            AppError::BadRequest(msg) => {
+                assert!(msg.contains("/tmp/ws"));
+                assert!(msg.contains("workspace folder"));
+            }
+            other => panic!("expected BadRequest, got {other:?}"),
+        }
+    }
+
+    // -- cwd precedence ----------------------------------------------------
+
+    #[test]
+    fn an_explicit_cwd_wins_over_the_workspace_folder() {
+        assert_eq!(
+            choose_cwd(Some("/tmp/elsewhere"), Some("/tmp/ws")),
+            Some(CwdChoice::Explicit("/tmp/elsewhere".to_string()))
+        );
+    }
+
+    #[test]
+    fn the_workspace_folder_is_the_default() {
+        assert_eq!(
+            choose_cwd(None, Some("/tmp/ws")),
+            Some(CwdChoice::WorkspaceFolder("/tmp/ws".to_string()))
+        );
+    }
+
+    #[test]
+    fn an_explicit_cwd_works_without_any_bound_folder() {
+        // The case the loosened 400 exists for: a folder-less workspace can
+        // still run an agent when the request says where.
+        assert_eq!(
+            choose_cwd(Some("/tmp/elsewhere"), None),
+            Some(CwdChoice::Explicit("/tmp/elsewhere".to_string()))
+        );
+    }
+
+    #[test]
+    fn neither_a_cwd_nor_a_folder_is_the_only_failure() {
+        assert_eq!(choose_cwd(None, None), None);
+    }
+
+    #[test]
+    fn a_blank_cwd_or_folder_counts_as_absent() {
+        // An empty string reaches here from both an untouched form field and a
+        // `folder_path` cleared by unbinding.
+        assert_eq!(choose_cwd(Some("   "), None), None);
+        assert_eq!(choose_cwd(None, Some("")), None);
+        assert_eq!(
+            choose_cwd(Some("  "), Some("/tmp/ws")),
+            Some(CwdChoice::WorkspaceFolder("/tmp/ws".to_string()))
+        );
+    }
+
+    #[test]
+    fn a_chosen_path_is_trimmed_but_otherwise_verbatim() {
+        // A path is data: spaces inside it, and every metacharacter, survive.
+        let choice = choose_cwd(Some("  /tmp/foo; rm -rf ~  "), None).expect("choice");
+        assert_eq!(choice.path(), "/tmp/foo; rm -rf ~");
+    }
+
+    // -- auto-title --------------------------------------------------------
+
+    #[test]
+    fn the_first_meaningful_line_becomes_the_title() {
+        assert_eq!(
+            extract_auto_title(b"Analyzing the workspace layout\nnext line\n"),
+            Some("Analyzing the workspace layout".to_string())
+        );
+    }
+
+    #[test]
+    fn ansi_colour_codes_are_stripped() {
+        let out = b"\x1b[1;32mBuilding the release binary\x1b[0m\n";
+        assert_eq!(
+            extract_auto_title(out),
+            Some("Building the release binary".to_string())
+        );
+    }
+
+    #[test]
+    fn cursor_moves_and_osc_titles_are_stripped() {
+        // An agent's opening frame is mostly terminal control, not text.
+        let out = b"\x1b[2J\x1b[H\x1b]0;claude\x07Reading the project files\n";
+        assert_eq!(
+            extract_auto_title(out),
+            Some("Reading the project files".to_string())
+        );
+    }
+
+    #[test]
+    fn box_rules_and_spinner_frames_are_skipped() {
+        let out = "╭──────────────────────────╮\n⠋\n⠙\n│ Starting the agent run │\n";
+        assert_eq!(
+            extract_auto_title(out.as_bytes()),
+            Some("Starting the agent run".to_string())
+        );
+    }
+
+    #[test]
+    fn ascii_art_banners_are_skipped() {
+        // Figlet-style art is punctuation, so it never clears the alphanumeric
+        // floor — the tagline underneath does.
+        let out = "  ___ _              _ \n / __| |__ _ _  _ __| |\n| (__| / _` | || / _` |\n \\___|_\\__,_|\\_,_\\__,_|\n\nStarting a coding session\n";
+        assert_eq!(
+            extract_auto_title(out.as_bytes()),
+            Some("Starting a coding session".to_string())
+        );
+    }
+
+    #[test]
+    fn a_shell_prompt_alone_is_not_a_title() {
+        assert_eq!(extract_auto_title(b"$ \n> \n%\n"), None);
+    }
+
+    #[test]
+    fn a_leading_path_separator_or_dot_survives() {
+        // Trimming these would quietly rewrite the agent's own words.
+        assert_eq!(
+            extract_auto_title(b"/srv/app/backend\n"),
+            Some("/srv/app/backend".to_string())
+        );
+        assert_eq!(
+            extract_auto_title(b".gitignore updated\n"),
+            Some(".gitignore updated".to_string())
+        );
+    }
+
+    #[test]
+    fn no_reasonable_line_leaves_the_default() {
+        // The honest outcome: a bad auto-title is worse than none at all.
+        assert_eq!(extract_auto_title(b""), None);
+        assert_eq!(extract_auto_title(b"\n\n   \n\t\n"), None);
+        assert_eq!(extract_auto_title("═══════\n▁▂▃▄▅\n".as_bytes()), None);
+        assert_eq!(extract_auto_title(b"\x1b[2J\x1b[H\x1b[0m\n"), None);
+    }
+
+    #[test]
+    fn an_unterminated_line_is_not_used_yet() {
+        // The tail of a live stream is usually half-written; titling a session
+        // "Reading src/ma" would be worse than waiting one more chunk.
+        assert_eq!(extract_auto_title(b"Reading src/ma"), None);
+        assert_eq!(
+            extract_auto_title(b"Reading src/main.rs\nAnd then some half-writ"),
+            Some("Reading src/main.rs".to_string())
+        );
+    }
+
+    #[test]
+    fn a_carriage_return_terminates_a_line_too() {
+        // TUI agents redraw a status line without ever emitting `\n`.
+        assert_eq!(
+            extract_auto_title(b"Loading the model config\rLoading the model config."),
+            Some("Loading the model config".to_string())
+        );
+    }
+
+    #[test]
+    fn a_long_line_is_truncated_with_an_ellipsis() {
+        let long = "a".repeat(200);
+        let title = extract_auto_title(format!("{long}\n").as_bytes()).expect("title");
+        assert_eq!(title.chars().count(), AUTO_TITLE_MAX_CHARS);
+        assert!(title.ends_with('…'));
+    }
+
+    #[test]
+    fn truncation_counts_characters_not_bytes() {
+        // Agents print emoji and box drawing; a byte slice would land
+        // mid-codepoint and produce mojibake.
+        let long = "é".repeat(200);
+        let title = extract_auto_title(format!("{long}\n").as_bytes()).expect("title");
+        assert_eq!(title.chars().count(), AUTO_TITLE_MAX_CHARS);
+    }
+
+    #[test]
+    fn a_line_at_the_limit_is_left_alone() {
+        let exact = "b".repeat(AUTO_TITLE_MAX_CHARS);
+        assert_eq!(
+            extract_auto_title(format!("{exact}\n").as_bytes()),
+            Some(exact)
+        );
+    }
+
+    #[test]
+    fn a_tail_that_starts_mid_codepoint_does_not_panic_while_titling() {
+        let mut bytes = vec![0x9f, 0x92, 0xa9];
+        bytes.extend_from_slice(b" resuming the session\n");
+        assert!(extract_auto_title(&bytes).is_some());
+    }
+
+    #[test]
+    fn strip_ansi_keeps_the_text_and_drops_the_controls() {
+        assert_eq!(strip_ansi("\x1b[31mred\x1b[0m text"), "red text");
+        assert_eq!(strip_ansi("a\tb"), "a b");
+        assert_eq!(strip_ansi("bell\x07"), "bell");
+        // A window may begin inside a sequence; an unterminated escape simply
+        // consumes the rest rather than leaking `[38;5;`.
+        assert_eq!(strip_ansi("\x1b[38;5;"), "");
     }
 
     // -- activity heuristic ------------------------------------------------
