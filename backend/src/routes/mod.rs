@@ -1,3 +1,4 @@
+pub mod agents;
 pub mod ai;
 pub mod clusters;
 pub mod files;
@@ -116,6 +117,13 @@ pub fn build_router(state: AppState) -> Router {
             get(opencost::get_assets))
         .route("/api/clusters/:ctx/plugins/opencost/summary",
             get(opencost::get_summary))
+        // Agent definitions (registry of external CLI coding agents)
+        .route("/api/agent-definitions",
+            get(agents::list_agent_definitions).post(agents::create_agent_definition))
+        .route("/api/agent-definitions/:id",
+            put(agents::update_agent_definition)
+            .delete(agents::delete_agent_definition)
+        )
         // Settings
         .route("/api/settings/kubeconfig",
             get(settings::get_kubeconfig).put(settings::set_kubeconfig))

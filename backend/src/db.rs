@@ -1,5 +1,6 @@
 use sqlx::{SqlitePool, sqlite::SqliteConnectOptions};
 use std::str::FromStr;
+use uuid::Uuid;
 
 pub async fn init_pool(database_url: &str) -> anyhow::Result<SqlitePool> {
     let options = SqliteConnectOptions::from_str(database_url)?
@@ -172,6 +173,63 @@ pub(crate) async fn run_migrations(pool: &SqlitePool) -> anyhow::Result<()> {
     )
     .execute(pool)
     .await?;
+
+    // Registry of external CLI coding agents a supervised session can launch
+    // (Claude Code, Codex, Aider, or a user-defined command). `args`/`env` are
+    // JSON (array of strings / string map) stored as TEXT — see
+    // `routes/agents.rs` for the shapes and validation.
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS agent_definitions (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            command TEXT NOT NULL,
+            args TEXT NOT NULL DEFAULT '[]',
+            env TEXT NOT NULL DEFAULT '{}',
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            built_in INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )",
+    )
+    .execute(pool)
+    .await?;
+
+    // Seed the three built-in agent definitions exactly once, on FIXED ids, so
+    // `routes/agents.rs` can key deletes/updates on them predictably. Gated by
+    // a `user_preferences` marker rather than relying on `INSERT OR IGNORE`
+    // alone: a plain conditional insert would resurrect a built-in row a user
+    // deliberately deleted on the very next startup, since its id would look
+    // "missing" again only until this block re-inserts it.
+    let seeded: Option<String> = sqlx::query_scalar(
+        "SELECT value FROM user_preferences WHERE key = 'agent_seed_done'",
+    )
+    .fetch_optional(pool)
+    .await?;
+
+    if seeded.is_none() {
+        for (id, name, command) in [
+            ("claude", "Claude Code", "claude"),
+            ("codex", "Codex", "codex"),
+            ("aider", "Aider", "aider"),
+        ] {
+            sqlx::query(
+                "INSERT OR IGNORE INTO agent_definitions (id, name, command, built_in)
+                 VALUES (?, ?, ?, 1)",
+            )
+            .bind(id)
+            .bind(name)
+            .bind(command)
+            .execute(pool)
+            .await?;
+        }
+
+        sqlx::query(
+            "INSERT OR IGNORE INTO user_preferences (id, key, value) VALUES (?, 'agent_seed_done', '1')",
+        )
+        .bind(Uuid::new_v4().to_string())
+        .execute(pool)
+        .await?;
+    }
 
     Ok(())
 }
