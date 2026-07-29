@@ -9,13 +9,33 @@ interface TerminalInnerProps {
   wsUrl: string;
   className?: string;
   connectMessage?: string;
+  /**
+   * Called once, immediately after the terminal is created and opened, with
+   * the instance and a writer for the socket behind it.
+   *
+   * Optional and additive — consumers that only need a terminal on a socket
+   * pass nothing and get exactly the behaviour they had before this existed.
+   *
+   * `send` reads the connection at call time rather than closing over it, so
+   * it keeps working across the reconnects this component owns. Handing one
+   * out is the point: a caller that needs to write (a composer box, say) must
+   * not open a second WebSocket, because this component is the only owner of
+   * the session's connection and of its lifecycle.
+   */
+  onReady?: (term: Terminal, send: (data: string) => void) => void;
 }
 
-export function TerminalInner({ wsUrl, className, connectMessage }: TerminalInnerProps) {
+export function TerminalInner({ wsUrl, className, connectMessage, onReady }: TerminalInnerProps) {
   const terminalRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
+
+  // Held in a ref, and read only from the init effect, so that a caller
+  // passing an inline arrow cannot re-run that effect — it must stay `[]`,
+  // since recreating xterm would throw away the scrollback.
+  const onReadyRef = useRef(onReady);
+  onReadyRef.current = onReady;
 
   // Initialize xterm once — never torn down on wsUrl changes
   useEffect(() => {
@@ -42,6 +62,11 @@ export function TerminalInner({ wsUrl, className, connectMessage }: TerminalInne
     fitAddon.fit();
     termRef.current = term;
     fitAddonRef.current = fitAddon;
+
+    onReadyRef.current?.(term, (data) => {
+      const ws = wsRef.current;
+      if (ws?.readyState === WebSocket.OPEN) ws.send(data);
+    });
 
     // Handle resize — skip when the container has no dimensions (e.g. panel is hidden)
     const resizeObserver = new ResizeObserver((entries) => {
