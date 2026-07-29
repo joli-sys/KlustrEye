@@ -231,5 +231,33 @@ pub(crate) async fn run_migrations(pool: &SqlitePool) -> anyhow::Result<()> {
         .await?;
     }
 
+    // Agent supervisor sessions. The live PTY lives in the in-memory registry
+    // (`agents::AgentRegistry`); this table is the durable record of what ran.
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS agent_sessions (
+            id TEXT PRIMARY KEY,
+            workspace_id TEXT NOT NULL,
+            definition_id TEXT,
+            title TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'running',
+            exit_code INTEGER,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            last_activity_at TEXT,
+            exited_at TEXT
+        )",
+    )
+    .execute(pool)
+    .await?;
+
+    // An agent process cannot outlive the server that spawned it — the registry
+    // holding its PTY is in-memory. Leaving these rows 'running' would make the
+    // UI advertise sessions that can never be attached to.
+    sqlx::query(
+        "UPDATE agent_sessions SET status = 'exited', exited_at = datetime('now')
+         WHERE status = 'running'",
+    )
+    .execute(pool)
+    .await?;
+
     Ok(())
 }
