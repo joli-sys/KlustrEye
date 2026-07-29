@@ -8,9 +8,9 @@ import {
   type FormEvent,
   type KeyboardEvent as ReactKeyboardEvent,
 } from "react";
-import { useParams } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import type { Terminal } from "@xterm/xterm";
+import type { ILink, ILinkProvider, Terminal } from "@xterm/xterm";
 import type { ISearchOptions, SearchAddon } from "@xterm/addon-search";
 import {
   AlertTriangle,
@@ -31,6 +31,9 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useWorkspaceId } from "@/hooks/use-cluster-path";
 import { useWorkspace } from "@/hooks/use-workspaces";
+import { basename, findFileReferences, resolveFileReference } from "@/lib/file-link";
+import { workspacePath } from "@/lib/paths";
+import { useTabStore } from "@/lib/stores/tab-store";
 import { cn } from "@/lib/utils";
 
 const TerminalComponent = lazy(() =>
@@ -53,6 +56,12 @@ interface AgentSession {
   title: string;
   status: string;
   exitCode: number | null;
+  /**
+   * The directory the agent process was started in. Null for a session that
+   * took the workspace's folder, and for rows written before per-session
+   * working directories existed — see `AgentSessionRow` in the backend.
+   */
+  cwd?: string | null;
   activity?: "working" | "waiting" | "exited";
   waitingConfidence?: "high" | "low" | null;
 }
@@ -102,6 +111,24 @@ function safeSearch(run: () => void): void {
 }
 
 /**
+ * The same discipline as `safeSearch`, for the file-link provider.
+ *
+ * `provideLinks` runs on mouse move over the transcript and reaches into the
+ * buffer cell by cell, so a torn-down terminal or an unexpected line shape is
+ * a throw inside a callback xterm invokes — which would climb into React and
+ * let the ErrorBoundary replace a LIVE agent session. A link is never worth
+ * the session; a failed one just leaves plain text.
+ */
+function safeLink(run: () => void): void {
+  try {
+    run();
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.error("Terminal file links failed:", e);
+  }
+}
+
+/**
  * One agent session's PTY, attached over `/ws/agent/:session_id`, wrapped in
  * chat-like chrome: a header, scrollback search, a jump-to-latest control and
  * a sticky composer.
@@ -122,6 +149,8 @@ function safeSearch(run: () => void): void {
 export function AgentTerminal() {
   const wsId = useWorkspaceId();
   const { sessionId = "" } = useParams<{ sessionId: string }>();
+  const navigate = useNavigate();
+  const openTab = useTabStore((s) => s.openTab);
   const rootRef = useRef<HTMLDivElement>(null);
   const frameRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -156,13 +185,20 @@ export function AgentTerminal() {
         : false,
   });
 
-  // The agent's process runs in the workspace's bound folder (the backend
-  // resolves the cwd from it), so that folder is the working directory to
-  // show. Absent for a workspace with no folder bound.
   const { data: workspace } = useWorkspace(wsId);
-  const cwd = workspace?.folderPath ?? null;
+  const folderPath = workspace?.folderPath ?? null;
 
   const session = sessions?.find((s) => s.id === sessionId);
+
+  /**
+   * Where this agent's relative paths point.
+   *
+   * A session can be started anywhere now, so the workspace folder is only the
+   * FALLBACK — the same one `choose_cwd` applies on the backend when a session
+   * carries no explicit cwd. Reading the folder first would resolve `src/x.ts`
+   * from an agent running in `backend/` to the wrong file entirely.
+   */
+  const cwd = session?.cwd ?? folderPath;
   const exited = session !== undefined && session.status !== "running";
   const hasSession = session !== undefined;
 
@@ -233,6 +269,52 @@ export function AgentTerminal() {
     const disposable = term.onScroll(update);
     return () => disposable.dispose();
   }, [term]);
+
+  /**
+   * Open a file the agent named, in the editor, at the line it named.
+   *
+   * BOTH calls, in this order. `openTab` registers the tab but does not route
+   * anywhere, so on its own it leaves a tab that looks selected over whatever
+   * was already on screen — a bug that shipped here once already. `navigate`
+   * is what actually mounts the editor, and the two must agree on one href or
+   * `openTab`'s dedup (keyed on href) opens a second tab for the same file.
+   *
+   * The line rides in the router's location state rather than the URL, for the
+   * same reason `find-in-files` does it: two references to one file have to
+   * resolve to the same href. `FileEditor` reads it back and reveals the line.
+   */
+  const openFile = useCallback(
+    (path: string, line?: number) => {
+      const href = workspacePath(wsId, `files/${path}`);
+      openTab(wsId, href, basename(path), "file", { path });
+      // No `state` at all when there is no line: an explicit `{ line:
+      // undefined }` would still be a fresh state object, and the editor's
+      // reveal effect keys off the location, not off the value.
+      if (line === undefined) navigate(href);
+      else navigate(href, { state: { line } });
+    },
+    [wsId, openTab, navigate]
+  );
+
+  /**
+   * File paths in the transcript become links.
+   *
+   * A separate provider from the web-links addon that `terminal-inner` loads:
+   * that one owns URLs, this one owns paths, and neither can express the
+   * other's rules. Re-registered whenever the resolution inputs change,
+   * because the provider closes over them — and disposed on the way out, since
+   * a provider left on a disposed terminal is a leak and a stale closure.
+   *
+   * Nothing is registered without a bound folder: the file API is confined to
+   * one, so every path would resolve to "not linkable" anyway.
+   */
+  useEffect(() => {
+    if (!term || !folderPath) return;
+    const disposable = term.registerLinkProvider(
+      createFileLinkProvider(term, cwd, folderPath, openFile)
+    );
+    return () => disposable.dispose();
+  }, [term, cwd, folderPath, openFile]);
 
   // The addon's own count, which knows about the whole scrollback. `index` is
   // -1 when there are more matches than it will decorate.
@@ -574,6 +656,232 @@ function readTranscript(term: Terminal): string {
   }
   while (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
   return lines.join("\n");
+}
+
+/**
+ * How far the wrap-joining below will walk in either direction. xterm's own
+ * web-links addon uses the same bound, for the same reason: a pathological
+ * unbroken line must not make a mouse move O(scrollback).
+ */
+const WRAP_SCAN_LIMIT = 2048;
+
+/**
+ * An xterm link provider for the file paths an agent prints.
+ *
+ * Matching and resolution are `@/lib/file-link`'s job and are tested there.
+ * What is left here is the part that genuinely needs a terminal: joining
+ * wrapped rows back into the logical line the agent actually wrote, and
+ * mapping string offsets in that line back to buffer cells.
+ */
+function createFileLinkProvider(
+  term: Terminal,
+  cwd: string | null,
+  folderPath: string,
+  onOpen: (path: string, line?: number) => void
+): ILinkProvider {
+  return {
+    provideLinks(bufferLineNumber, callback) {
+      let links: ILink[] | undefined;
+      safeLink(() => {
+        links = computeFileLinks(term, bufferLineNumber, cwd, folderPath, onOpen);
+      });
+      // Always answered, even after a failure: xterm waits on this callback,
+      // and never calling it would stall link detection for the whole row.
+      callback(links);
+    },
+  };
+}
+
+function computeFileLinks(
+  term: Terminal,
+  bufferLineNumber: number,
+  cwd: string | null,
+  folderPath: string,
+  onOpen: (path: string, line?: number) => void
+): ILink[] | undefined {
+  const { text, topIndex } = windowedLine(term, bufferLineNumber - 1);
+  if (!text) return undefined;
+
+  const links: ILink[] = [];
+  for (const ref of findFileReferences(text)) {
+    const target = resolveFileReference(ref.path, cwd, folderPath);
+    // Left as plain text on purpose. The filesystem API is confined to the
+    // workspace folder and answers 403 outside it, so underlining this would
+    // be an invitation to a click that cannot work.
+    if (!target.linkable) continue;
+
+    const [startY, startX] = mapStringIndex(term, topIndex, 0, ref.start);
+    if (startY === -1) continue;
+    const [endY, endX] = mapStringIndex(term, startY, startX, ref.length);
+    if (endY === -1) continue;
+
+    const tooltip = `Open ${target.absolutePath}${ref.line === undefined ? "" : `:${ref.line}`}`;
+    let hoverElement: HTMLElement | null = null;
+    const clearHover = () => {
+      hoverElement?.remove();
+      hoverElement = null;
+    };
+
+    links.push({
+      // 1-based and right-inclusive, which `mapStringIndex` is not: the start
+      // needs +1, the end is already the cell past the match.
+      range: { start: { x: startX + 1, y: startY + 1 }, end: { x: endX, y: endY + 1 } },
+      text: text.slice(ref.start, ref.start + ref.length),
+      activate: () => safeLink(() => onOpen(target.path, ref.line)),
+      hover: (event) =>
+        safeLink(() => {
+          clearHover();
+          hoverElement = showLinkTooltip(term, event, tooltip);
+        }),
+      leave: () => safeLink(clearHover),
+      // xterm releases links on every re-render of the row, so without this a
+      // tooltip whose link is dropped mid-hover would never be taken down.
+      dispose: () => safeLink(clearHover),
+    });
+  }
+
+  return links.length > 0 ? links : undefined;
+}
+
+/**
+ * The wrapped rows around `lineIndex`, joined, plus the buffer index of the
+ * first of them.
+ *
+ * A terminal breaks a long line across rows, so `src/lib/` and `main.tf:42`
+ * can sit on different ones — matching a single row would miss the reference
+ * and, worse, could match the tail on its own and link a path that never
+ * existed. Ported from xterm's web-links addon (`LinkComputer`), including its
+ * stop-at-whitespace heuristic: a row containing a space cannot be the middle
+ * of an unbroken token, so the scan stops there.
+ */
+function windowedLine(term: Terminal, lineIndex: number): { text: string; topIndex: number } {
+  const buffer = term.buffer.active;
+  const current = buffer.getLine(lineIndex);
+  if (!current) return { text: "", topIndex: lineIndex };
+
+  const currentText = current.translateToString(true);
+  const lines: string[] = [];
+  let topIndex = lineIndex;
+  let length = 0;
+
+  if (current.isWrapped && currentText[0] !== " ") {
+    while (length < WRAP_SCAN_LIMIT) {
+      const previous = buffer.getLine(topIndex - 1);
+      // Do NOT move topIndex past a row that is not there — it is the anchor
+      // the offsets below are measured from.
+      if (!previous) break;
+      topIndex--;
+      const text = previous.translateToString(true);
+      length += text.length;
+      lines.push(text);
+      if (!previous.isWrapped || text.includes(" ")) break;
+    }
+    lines.reverse();
+  }
+
+  lines.push(currentText);
+
+  length = 0;
+  for (let i = lineIndex + 1; length < WRAP_SCAN_LIMIT; i++) {
+    const next = buffer.getLine(i);
+    if (!next || !next.isWrapped) break;
+    const text = next.translateToString(true);
+    length += text.length;
+    lines.push(text);
+    if (text.includes(" ")) break;
+  }
+
+  return { text: lines.join(""), topIndex };
+}
+
+/**
+ * A string offset within a joined line, back to a `[lineIndex, column]` cell
+ * position — both 0-based — or `[-1, -1]` if it runs off the end of the
+ * buffer.
+ *
+ * Not arithmetic: `translateToString` collapses a double-width character into
+ * one string character occupying two cells, so the only reliable way across is
+ * to walk the cells. Ported from xterm's web-links addon, wide-char correction
+ * included.
+ */
+function mapStringIndex(
+  term: Terminal,
+  lineIndex: number,
+  startColumn: number,
+  stringIndex: number
+): [number, number] {
+  const buffer = term.buffer.active;
+  const cell = buffer.getNullCell();
+  let line = lineIndex;
+  let start = startColumn;
+  let remaining = stringIndex;
+
+  while (remaining) {
+    const bufferLine = buffer.getLine(line);
+    if (!bufferLine) return [-1, -1];
+    for (let i = start; i < bufferLine.length; i++) {
+      bufferLine.getCell(i, cell);
+      const chars = cell.getChars();
+      if (cell.getWidth()) {
+        remaining -= chars.length || 1;
+        // A wide character that did not fit is pushed to the next row, leaving
+        // this cell empty; the string has no character for it, so give one
+        // back.
+        if (i === bufferLine.length - 1 && chars === "") {
+          const wrapped = buffer.getLine(line + 1);
+          if (wrapped?.isWrapped) {
+            wrapped.getCell(0, cell);
+            if (cell.getWidth() === 2) remaining += 1;
+          }
+        }
+      }
+      if (remaining < 0) return [line, i];
+    }
+    line++;
+    start = 0;
+  }
+
+  return [line, start];
+}
+
+/**
+ * A hover label saying what a click will open.
+ *
+ * Built by hand rather than with a `title` attribute because a terminal row is
+ * a run of cells, not an element per link — there is nothing to hang one on.
+ * The `xterm-hover` class is xterm's own contract: it stops the pointer from
+ * falling through the label and activating whatever link is underneath.
+ */
+function showLinkTooltip(term: Terminal, event: MouseEvent, label: string): HTMLElement | null {
+  const host = term.element;
+  if (!host) return null;
+
+  const bounds = host.getBoundingClientRect();
+  const element = document.createElement("div");
+  element.className = "xterm-hover";
+  element.textContent = label;
+  element.style.cssText = [
+    "position:absolute",
+    "z-index:10",
+    "max-width:90%",
+    "padding:2px 6px",
+    "border-radius:4px",
+    "background:#1f1f1f",
+    "color:#e5e5e5",
+    "border:1px solid #3f3f3f",
+    "font-size:11px",
+    "font-family:inherit",
+    "white-space:nowrap",
+    "overflow:hidden",
+    "text-overflow:ellipsis",
+    "pointer-events:none",
+  ].join(";");
+  // Above the pointer, so the label never covers the path it describes.
+  element.style.left = `${Math.max(0, event.clientX - bounds.left)}px`;
+  element.style.top = `${Math.max(0, event.clientY - bounds.top - 22)}px`;
+
+  host.appendChild(element);
+  return element;
 }
 
 function matchLabel(query: string, matches: { index: number; count: number } | null): string {
