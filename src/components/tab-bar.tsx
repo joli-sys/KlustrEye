@@ -3,46 +3,12 @@
 import { useEffect, useRef } from "react";
 import { useLocation, useSearchParams, useNavigate } from "react-router-dom";
 import { useTabStore, modelKeyForTab, type Tab } from "@/lib/stores/tab-store";
-import { SIDEBAR_SECTIONS } from "@/lib/constants";
 import { X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import { isDirty, releaseIfClean } from "@/lib/editor/model-registry";
 import { workspacePath } from "@/lib/paths";
-
-/** Build a lookup from href suffix → label from sidebar sections */
-const hrefToLabel: Record<string, string> = {};
-for (const section of SIDEBAR_SECTIONS) {
-  for (const item of section.items) {
-    hrefToLabel[item.href] = item.label;
-  }
-}
-
-function deriveTitleFromPath(pathname: string): string {
-  // pathname like /clusters/<ctx>/workloads/pods/my-pod
-  const parts = pathname.split("/");
-  // Find index of "clusters" and skip context
-  const clustersIdx = parts.indexOf("clusters");
-  if (clustersIdx === -1) return parts[parts.length - 1] || "Page";
-  const subParts = parts.slice(clustersIdx + 2); // after contextName
-  const subPath = subParts.join("/");
-
-  // Check exact sidebar match
-  if (hrefToLabel[subPath]) return hrefToLabel[subPath];
-
-  // Check if the parent path matches a sidebar entry (detail page)
-  const parentPath = subParts.slice(0, -1).join("/");
-  if (hrefToLabel[parentPath]) {
-    // It's a detail page — use the resource name (last segment)
-    return decodeURIComponent(subParts[subParts.length - 1]);
-  }
-
-  // Fallback: prettify last segment
-  const last = subParts[subParts.length - 1] || "Page";
-  return decodeURIComponent(last)
-    .replace(/[-_]/g, " ")
-    .replace(/\b\w/g, (c) => c.toUpperCase());
-}
+import { syncTabToLocation } from "@/lib/tab-route";
 
 export function TabBar({ wsId }: { wsId: string }) {
   const pathname = useLocation().pathname;
@@ -53,7 +19,7 @@ export function TabBar({ wsId }: { wsId: string }) {
 
   const tabs = useTabStore((s) => s.tabsByWorkspace[wsId]);
   const activeTabId = useTabStore((s) => s.activeTabIdByWorkspace[wsId] ?? null);
-  const { updateActiveTab, setActiveTab, closeTab } = useTabStore();
+  const { setActiveTab, closeTab } = useTabStore();
 
   /**
    * Closing a tab is the only routine way a buffer stops being reachable, so
@@ -105,19 +71,12 @@ export function TabBar({ wsId }: { wsId: string }) {
     }
   };
 
-  // Auto-sync: when URL changes, update the active tab's href/title.
-  // Only k8s tabs derive their title from the path — file/terminal/agent/diff
-  // tabs carry their own title and must keep it.
+  // Auto-sync: the active tab follows the URL, but only while the URL still
+  // means the same KIND of thing. Crossing kinds opens a tab instead of
+  // repurposing one — see `syncTabToLocation`.
   useEffect(() => {
-    const search = searchParams.toString();
-    const fullHref = search ? `${pathname}?${search}` : pathname;
-    const state = useTabStore.getState();
-    const activeId = state.activeTabIdByWorkspace[wsId];
-    const tab = (state.tabsByWorkspace[wsId] || []).find((t) => t.id === activeId);
-    if (!tab) return;
-    const title = tab.kind === "k8s" ? deriveTitleFromPath(pathname) : tab.title;
-    updateActiveTab(wsId, fullHref, title);
-  }, [pathname, searchParams, wsId, updateActiveTab]);
+    syncTabToLocation(wsId, pathname, searchParams.toString());
+  }, [pathname, searchParams, wsId]);
 
   // Scroll active tab into view
   useEffect(() => {
