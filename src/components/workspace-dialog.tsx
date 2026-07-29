@@ -31,11 +31,35 @@ function isTauri(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
 
+/**
+ * Opens the native directory picker.
+ *
+ * Returns the chosen path, or `null` when the user cancelled — cancelling is
+ * the normal case, not a failure, and must stay distinguishable from an error.
+ * Anything that goes wrong THROWS so the caller can surface it: an earlier
+ * version swallowed every outcome into `null`, so a failing picker was
+ * indistinguishable from a cancelled one and the button appeared to do nothing.
+ */
 async function pickFolder(): Promise<string | null> {
-  if (!isTauri()) return null;
-  const { open } = await import("@tauri-apps/plugin-dialog");
-  const selected = await open({ directory: true, multiple: false });
-  return typeof selected === "string" ? selected : null;
+  if (!isTauri()) {
+    throw new Error("Native folder picker is only available in the desktop app.");
+  }
+
+  const mod = await import("@tauri-apps/plugin-dialog");
+  const selected = await mod.open({ directory: true, multiple: false });
+
+  // Cancelled.
+  if (selected === null || selected === undefined) return null;
+  if (typeof selected === "string") return selected;
+  // `multiple: false` should never yield an array, but a plugin-version skew
+  // between the JS and Rust sides could. Take the first rather than silently
+  // returning nothing.
+  if (Array.isArray(selected) && typeof selected[0] === "string") return selected[0];
+
+  throw new Error(
+    `Folder picker returned an unexpected value (${typeof selected}). ` +
+      "This usually means the JS and Rust tauri-plugin-dialog versions disagree."
+  );
 }
 
 export function WorkspaceDialog({ workspace, open, onOpenChange }: WorkspaceDialogProps) {
@@ -65,8 +89,22 @@ export function WorkspaceDialog({ workspace, open, onOpenChange }: WorkspaceDial
   }, [open, workspace]);
 
   async function handleBrowse() {
-    const selected = await pickFolder();
-    if (selected) setFolderPath(selected);
+    try {
+      const selected = await pickFolder();
+      // null means the user cancelled — leave the field alone, say nothing.
+      if (selected) setFolderPath(selected);
+    } catch (e) {
+      // Without this the rejection was unhandled and the button looked inert.
+      // eslint-disable-next-line no-console
+      console.error("Folder picker failed:", e);
+      addToast({
+        title: "Could not open the folder picker",
+        description:
+          (e as Error).message +
+          " You can still type an absolute path into the field.",
+        variant: "destructive",
+      });
+    }
   }
 
   function handleSubmit(e: React.FormEvent) {
