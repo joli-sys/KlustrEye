@@ -11,8 +11,11 @@ import { clusterPath } from "@/lib/paths";
  * Index route for `/w/:wsId`. Without it a folder-only workspace (a supported
  * binding combination) renders an empty <Outlet /> — no header, no way home.
  *
- * P0 ships the shell only: name, bindings, and the same "arrives in P1/P3"
- * language the sidebar uses. No file tree, no agent UI.
+ * Shows the workspace name, its bindings, and what each surface currently
+ * offers. Keep the copy here in step with what has actually shipped — it was
+ * written in P0 saying "file browsing arrives in P1", and stayed that way
+ * after P1 landed the file tree, which read as a missing feature to anyone
+ * opening a folder-bound workspace.
  */
 export function WorkspaceHome() {
   const wsId = useWorkspaceId();
@@ -56,9 +59,20 @@ export function WorkspaceHome() {
           <Card>
             <CardContent className="pt-6">
               <div className="text-sm font-medium mb-1">Files</div>
-              <p className="text-sm text-muted-foreground">
-                File browsing arrives in P1.
-              </p>
+              {!workspace.folderPath ? (
+                <p className="text-sm text-muted-foreground">
+                  No folder bound. Edit this workspace to add one.
+                </p>
+              ) : !workspace.folderExists ? (
+                <p className="text-sm text-muted-foreground">
+                  Folder not found: {workspace.folderPath}
+                </p>
+              ) : (
+                <p className="text-sm text-muted-foreground">
+                  Pick a file from the sidebar to start editing, or search it
+                  with Find in Files.
+                </p>
+              )}
             </CardContent>
           </Card>
           <Card>
