@@ -39,4 +39,16 @@ describe("migrateUIState", () => {
     const r = migrateUIState({ namespaceByCluster: { prod: "x" } }, 3);
     expect(r.namespaceByWorkspace).toEqual({});
   });
+
+  it("defaults activityView for a payload written before the field existed", () => {
+    // No version bump backs this field, so the default has to come from the
+    // defaults object — a v3 payload at v3 never triggers `migrate` at all.
+    const r = migrateUIState({ namespaceByWorkspace: { ws1: "a" } }, 3);
+    expect(r.activityView).toBe("explorer");
+  });
+
+  it("keeps a persisted activityView and rejects an unknown one", () => {
+    expect(migrateUIState({ activityView: "cluster" }, 3).activityView).toBe("cluster");
+    expect(migrateUIState({ activityView: "bogus" }, 3).activityView).toBe("explorer");
+  });
 });
