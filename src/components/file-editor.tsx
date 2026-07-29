@@ -17,6 +17,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/components/ui/toast";
 import { useWorkspaceId } from "@/hooks/use-cluster-path";
 import { FileSaveError, useFile, useSaveFile, type FileContent } from "@/hooks/use-files";
+import { languageForPath } from "@/lib/editor/language";
 import {
   disposeModel,
   fileModelKey,
@@ -27,56 +28,6 @@ import {
   setViewState,
 } from "@/lib/editor/model-registry";
 import { useTabStore } from "@/lib/stores/tab-store";
-
-const LANGUAGE_BY_EXTENSION: Record<string, string> = {
-  ts: "typescript",
-  tsx: "typescript",
-  mts: "typescript",
-  cts: "typescript",
-  js: "javascript",
-  jsx: "javascript",
-  mjs: "javascript",
-  cjs: "javascript",
-  json: "json",
-  jsonc: "json",
-  rs: "rust",
-  yaml: "yaml",
-  yml: "yaml",
-  md: "markdown",
-  markdown: "markdown",
-  // monaco 0.55 ships no TOML grammar; `ini` is the closest it has and renders
-  // `[section]` / `key = value` sensibly.
-  toml: "ini",
-  ini: "ini",
-  css: "css",
-  scss: "scss",
-  less: "less",
-  html: "html",
-  htm: "html",
-  sh: "shell",
-  bash: "shell",
-  zsh: "shell",
-  py: "python",
-  go: "go",
-  sql: "sql",
-  xml: "xml",
-  tf: "hcl",
-};
-
-const LANGUAGE_BY_BASENAME: Record<string, string> = {
-  dockerfile: "dockerfile",
-};
-
-/** Best-effort Monaco language id for a path; `plaintext` when unknown. */
-export function languageForPath(path: string): string {
-  const base = (path.split("/").pop() ?? "").toLowerCase();
-  const byName = LANGUAGE_BY_BASENAME[base];
-  if (byName) return byName;
-  const dot = base.lastIndexOf(".");
-  // dot === 0 is a dotfile (".gitignore"), not an extension.
-  if (dot <= 0) return "plaintext";
-  return LANGUAGE_BY_EXTENSION[base.slice(dot + 1)] ?? "plaintext";
-}
 
 /**
  * The tab href is built by whoever opened the tab, while `location.pathname`
@@ -142,7 +93,17 @@ const EDITOR_OPTIONS: monaco.editor.IStandaloneEditorConstructionOptions = {
 export function FileEditor() {
   const wsId = useWorkspaceId();
   const path = useParams()["*"] ?? "";
-  const href = useLocation().pathname;
+  const location = useLocation();
+  const href = location.pathname;
+  /**
+   * `find-in-files` navigates with the matched line in the router's location
+   * state rather than in the URL. Deliberately: the tab's href and the route
+   * have to agree exactly for `openTab`'s dedup and `updateActiveTab` to
+   * work, so a `?line=` would either desync them or make every match in one
+   * file open its own tab. Location state rides alongside and does neither.
+   */
+  const revealLine = (location.state as { line?: number } | null)?.line;
+  const locationKey = location.key;
   const { addToast } = useToast();
   const theme = useMonacoTheme();
   const saveFile = useSaveFile();
@@ -255,6 +216,32 @@ export function FileEditor() {
       if (ed) setViewState(key, ed.saveViewState());
     };
   }, [editorReady, modelKey, language, hasData, reloadNonce]);
+
+  /**
+   * Jump to the line `find-in-files` matched.
+   *
+   * A SEPARATE effect from the one above on purpose. That effect's dependency
+   * list is load-bearing for model lifetime, and `locationKey` changes on
+   * every navigation — folding it in would tear down and rebuild the attach
+   * on routes where nothing about the model changed. Declared after it so
+   * React (which flushes passive effects in declaration order) has already
+   * attached the model for this path by the time this runs.
+   *
+   * `locationKey` is in the deps because clicking a second match in a file
+   * that is already open produces the same pathname: only the location key
+   * changes, and without it this would fire once and never again.
+   */
+  useEffect(() => {
+    const editor = editorRef.current;
+    if (!editor || revealLine === undefined) return;
+    const model = editor.getModel();
+    if (!model) return;
+    // The file may have shrunk since the search ran; monaco would clamp, but
+    // scrolling to a line that is not the match is worse than not scrolling.
+    if (revealLine < 1 || revealLine > model.getLineCount()) return;
+    editor.setPosition({ lineNumber: revealLine, column: 1 });
+    editor.revealLineInCenter(revealLine);
+  }, [revealLine, locationKey, editorReady, modelKey, hasData, reloadNonce]);
 
   const doSave = useCallback(
     async (force: boolean) => {

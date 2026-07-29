@@ -91,10 +91,15 @@ export function releaseIfClean(path: string): boolean {
   // Refuse to free a buffer that an editor is still showing. Monaco's
   // onWillDispose detaches the model rather than throwing, so disposing an
   // attached one does not crash — it leaves the editor mounted and blank with
-  // no dep change to rebuild it, and Save silently no-ops. Both the tab-close
-  // path and MAX_TABS eviction can reach an attached model (the file tree
-  // opens tabs without navigating, so the routed file need not be the active
-  // tab), which is why the guard lives here rather than at the call sites.
+  // no dep change to rebuild it, and Save silently no-ops.
+  //
+  // Opening a file now navigates as well as opening a tab, so the routed file
+  // IS the active tab in the common case — but that is a convention the
+  // callers happen to follow, not an invariant the registry can rely on.
+  // MAX_TABS eviction closes some OTHER tab, and closing a tab picks a
+  // successor before the router has moved, so both paths can still reach an
+  // attached model. The guard therefore stays here rather than at the call
+  // sites, where every future caller would have to remember it.
   const entry = registry.get(path);
   if (entry?.model.isAttachedToEditor()) return false;
 

@@ -1,5 +1,6 @@
 /**
- * Points `@monaco-editor/react` at the bundled `monaco-editor` package.
+ * Points `@monaco-editor/react` at the bundled `monaco-editor` package, and
+ * registers the languages monaco does not ship (currently `helm`).
  *
  * Without this the loader fetches monaco from a CDN at runtime, producing a
  * SECOND monaco instance alongside the npm one that
@@ -17,6 +18,11 @@
  */
 import * as monaco from "monaco-editor";
 import { loader } from "@monaco-editor/react";
+import {
+  HELM_LANGUAGE_ID,
+  helmLanguageConfiguration,
+  helmMonarchLanguage,
+} from "@/lib/editor/helm-language";
 
 import EditorWorker from "monaco-editor/esm/vs/editor/editor.worker?worker";
 import JsonWorker from "monaco-editor/esm/vs/language/json/json.worker?worker";
@@ -51,5 +57,24 @@ globalThis.MonacoEnvironment = {
     }
   },
 };
+
+/**
+ * Helm templates are not plain YAML — monaco ships no grammar for them, so we
+ * register one. The grammar itself lives in `src/lib/editor/helm-language.ts`
+ * (data only, monaco imported for types only) so a vitest case can run
+ * monaco's Monarch compiler over it; only the registration belongs here.
+ *
+ * Order matters: this module runs at import time from `App.tsx`, which is
+ * before any editor mounts, so a model created with language id `helm` always
+ * finds a registered language. An UNregistered id is not an error in monaco —
+ * it silently renders as plaintext.
+ */
+monaco.languages.register({
+  id: HELM_LANGUAGE_ID,
+  aliases: ["Helm", "helm"],
+  extensions: [".tpl"],
+});
+monaco.languages.setLanguageConfiguration(HELM_LANGUAGE_ID, helmLanguageConfiguration);
+monaco.languages.setMonarchTokensProvider(HELM_LANGUAGE_ID, helmMonarchLanguage);
 
 loader.config({ monaco });

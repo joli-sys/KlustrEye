@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import {
   ChevronRight,
   ChevronDown,
@@ -36,6 +37,7 @@ function FileTreeNode({
   toggleExpanded: (path: string) => void;
 }) {
   const { openTab } = useTabStore();
+  const navigate = useNavigate();
   const isExpanded = entry.isDir && expanded.has(entry.path);
 
   // Lazy: only fetches once this node is actually expanded.
@@ -47,15 +49,18 @@ function FileTreeNode({
   const handleClick = () => {
     if (entry.isDir) {
       toggleExpanded(entry.path);
-    } else {
-      openTab(
-        wsId,
-        workspacePath(wsId, "files/" + entry.path),
-        entry.name,
-        "file",
-        { path: entry.path }
-      );
+      return;
     }
+    // ONE href for both calls. Registering the tab does not mount anything —
+    // `FileEditor` only renders for the routed path — so without the navigate
+    // a click added a tab and left the user staring at the previous file until
+    // they clicked the tab as well. And the two must be the same string: the
+    // tab is deduped by exact href, and `updateActiveTab` rewrites the active
+    // tab to whatever the router lands on, so a mismatch would silently
+    // rename the tab that was just opened.
+    const href = workspacePath(wsId, "files/" + entry.path);
+    openTab(wsId, href, entry.name, "file", { path: entry.path });
+    navigate(href);
   };
 
   const Icon = entry.isDir ? (isExpanded ? FolderOpen : Folder) : File;

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { Search, Loader2, AlertCircle, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useSearchFiles, type SearchMatch } from "@/hooks/use-files";
@@ -66,6 +67,7 @@ export function FindInFiles({ wsId }: { wsId: string }) {
   const [query, setQuery] = useState("");
   const debouncedQuery = useDebounce(query, DEBOUNCE_MS);
   const { openTab } = useTabStore();
+  const navigate = useNavigate();
 
   const { data, isLoading, isFetching, isError } = useSearchFiles(
     wsId,
@@ -78,13 +80,20 @@ export function FindInFiles({ wsId }: { wsId: string }) {
   );
 
   const handleOpen = (match: SearchMatch) => {
-    openTab(
-      wsId,
-      workspacePath(wsId, "files/" + match.path),
-      basename(match.path),
-      "file",
-      { path: match.path, line: String(match.line) }
-    );
+    // ONE href for both calls — see the same pattern in `file-tree`. Opening
+    // the tab alone never mounted the editor, so a result click did nothing
+    // visible until the tab was clicked too.
+    const href = workspacePath(wsId, "files/" + match.path);
+    openTab(wsId, href, basename(match.path), "file", {
+      path: match.path,
+      line: String(match.line),
+    });
+    // The line travels in the router's location state, NOT the URL: two
+    // matches in one file must resolve to the same href or they would open as
+    // two tabs. `FileEditor` reads it back and scrolls there. Navigating to a
+    // pathname that is already current still mints a fresh location key, so
+    // clicking a second match in the file already open re-fires the jump.
+    navigate(href, { state: { line: match.line } });
   };
 
   const showResults = debouncedQuery.length >= MIN_QUERY_LENGTH;
