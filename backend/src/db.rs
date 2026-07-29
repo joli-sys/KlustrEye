@@ -120,6 +120,12 @@ pub(crate) async fn run_migrations(pool: &SqlitePool) -> anyhow::Result<()> {
     .execute(pool)
     .await?;
 
+    // `context_name` is LEGACY. The authoritative cluster bindings live in
+    // `workspace_clusters` (many per workspace); this column is kept only so an
+    // older build pointed at the same database still finds one sane cluster. It
+    // is written as the first bound cluster (or NULL when none) and never read
+    // as the source of truth. It cannot be dropped: this file is a flat list of
+    // `CREATE TABLE IF NOT EXISTS` with no column-migration support.
     sqlx::query(
         "CREATE TABLE IF NOT EXISTS workspaces (
             id TEXT PRIMARY KEY,
@@ -131,6 +137,38 @@ pub(crate) async fn run_migrations(pool: &SqlitePool) -> anyhow::Result<()> {
             created_at TEXT NOT NULL DEFAULT (datetime('now')),
             updated_at TEXT NOT NULL DEFAULT (datetime('now'))
         )",
+    )
+    .execute(pool)
+    .await?;
+
+    // A workspace binds MANY clusters, and the same cluster may belong to
+    // several workspaces — hence a join table with a composite primary key and
+    // no UNIQUE on context_name.
+    //
+    // `PRAGMA foreign_keys` is never turned ON for this pool, so the ON DELETE
+    // CASCADE below is documentation, not behaviour: `delete_workspace` deletes
+    // the join rows explicitly.
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS workspace_clusters (
+            workspace_id TEXT NOT NULL,
+            context_name TEXT NOT NULL,
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            PRIMARY KEY (workspace_id, context_name),
+            FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+        )",
+    )
+    .execute(pool)
+    .await?;
+
+    // Backfill the legacy one-cluster-per-workspace bindings. Idempotent: the
+    // composite primary key plus INSERT OR IGNORE makes repeated startups a
+    // no-op, and a workspace whose binding was later removed via the API is not
+    // resurrected because `workspaces.context_name` is cleared alongside it.
+    sqlx::query(
+        "INSERT OR IGNORE INTO workspace_clusters (workspace_id, context_name, sort_order)
+         SELECT id, context_name, 0 FROM workspaces
+         WHERE context_name IS NOT NULL AND trim(context_name) <> ''",
     )
     .execute(pool)
     .await?;
