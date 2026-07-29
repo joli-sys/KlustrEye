@@ -12,6 +12,17 @@ export interface AgentDefinition {
 
 export type AgentSessionStatus = "running" | "exited";
 
+/**
+ * A heuristic liveness signal, distinct from `status`: `working` means the
+ * process produced output within the last ~1.5s, `waiting` means it is alive
+ * but quiet — which a long silent build also looks like. Never certainty,
+ * so UI copy must stay hedged (see `waitingConfidence`).
+ */
+export type AgentActivity = "working" | "waiting" | "exited";
+
+/** "high" = a known prompt pattern matched the session's recent output. */
+export type WaitingConfidence = "high" | "low" | null;
+
 export interface AgentSession {
   id: string;
   workspaceId: string;
@@ -22,6 +33,13 @@ export interface AgentSession {
   createdAt: string;
   lastActivityAt: string | null;
   exitedAt: string | null;
+  /**
+   * Optional: a client talking to an older/rolling-out backend may not see
+   * these fields at all, so every reader must treat their absence as
+   * "unknown" rather than assume a shape that isn't there.
+   */
+  activity?: AgentActivity;
+  waitingConfidence?: WaitingConfidence;
 }
 
 /** The registry of external CLI coding agents. Changes only when the user

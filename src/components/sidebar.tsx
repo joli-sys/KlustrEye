@@ -1,9 +1,13 @@
+import { useEffect, useRef } from "react";
 import { PanelLeftClose } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useUIStore, type ActivityView } from "@/lib/stores/ui-store";
+import { useTabStore } from "@/lib/stores/tab-store";
 import { clusterPath } from "@/lib/paths";
 import { useWorkspaceId } from "@/hooks/use-cluster-path";
 import type { Workspace } from "@/hooks/use-workspaces";
+import { useAgentSessions, type AgentSession } from "@/hooks/use-agents";
+import { newlyWaiting, waitingCount } from "@/lib/agent-activity";
 import { activeClusterName } from "@/lib/workspace-clusters";
 import { ActivityBar, availableViews } from "@/components/activity-bar";
 import { SidebarExplorer } from "@/components/sidebar-explorer";
@@ -11,6 +15,21 @@ import { SidebarSearch } from "@/components/sidebar-search";
 import { SidebarCluster } from "@/components/sidebar-cluster";
 import { SidebarAgents } from "@/components/sidebar-agents";
 import { Button } from "@/components/ui/button";
+import { useToast } from "@/components/ui/toast";
+
+/**
+ * Whether `sessionId`'s tab is both the active tab for this workspace AND
+ * the window actually has focus — the "open and focused" condition for
+ * suppressing a needs-input notification. A backgrounded/minimized window
+ * still has an "active" tab in the store, but the user isn't looking at it.
+ */
+function isSessionTabFocused(wsId: string, sessionId: string): boolean {
+  if (typeof document !== "undefined" && !document.hasFocus()) return false;
+  const state = useTabStore.getState();
+  const activeId = state.activeTabIdByWorkspace[wsId];
+  const activeTab = (state.tabsByWorkspace[wsId] || []).find((t) => t.id === activeId);
+  return !!activeTab && activeTab.kind === "agent" && activeTab.payload?.sessionId === sessionId;
+}
 
 /**
  * VS Code-style side panel: an always-visible icon rail plus exactly one view.
@@ -31,6 +50,38 @@ export function Sidebar({ workspace, contextName, onNavigate, forceExpanded }: {
   // Route first, first binding second — see activeClusterName.
   const effectiveContext = activeClusterName(workspace.clusters, contextName);
   const basePath = effectiveContext ? clusterPath(wsId, effectiveContext, "") : null;
+
+  // Sidebar is mounted for the whole workspace (see file comment), so this is
+  // the one place that can badge the rail and notify regardless of which
+  // view is currently open — SidebarAgents only exists while its own panel
+  // is showing. React Query dedupes this against SidebarAgents' own
+  // useAgentSessions(wsId) call, so it isn't a second network subscription.
+  const { data: agentSessions } = useAgentSessions(wsId);
+  const { addToast } = useToast();
+  const prevAgentSessionsRef = useRef<AgentSession[] | undefined>(undefined);
+  const agentSessionsSeededRef = useRef(false);
+
+  useEffect(() => {
+    if (!agentSessions) return;
+    if (!agentSessionsSeededRef.current) {
+      // First poll after mount: seed only. A session that was already
+      // waiting/high before this page opened isn't a NEW event — nothing to
+      // notify about yet, and firing here would toast on every page load.
+      agentSessionsSeededRef.current = true;
+      prevAgentSessionsRef.current = agentSessions;
+      return;
+    }
+    const transitioned = newlyWaiting(prevAgentSessionsRef.current, agentSessions);
+    for (const session of transitioned) {
+      if (isSessionTabFocused(wsId, session.id)) continue;
+      addToast({
+        title: `${session.title} needs input`,
+        description: "This agent looks like it's waiting on you.",
+        variant: "info",
+      });
+    }
+    prevAgentSessionsRef.current = agentSessions;
+  }, [agentSessions, wsId, addToast]);
 
   const views = availableViews({
     hasFolder: !!workspace.folderPath,
@@ -69,6 +120,7 @@ export function Sidebar({ workspace, contextName, onNavigate, forceExpanded }: {
         activeView={activeView}
         panelOpen={panelOpen}
         onSelect={handleSelect}
+        badgeCounts={{ terminals: waitingCount(agentSessions) }}
       />
 
       {panelOpen && (

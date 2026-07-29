@@ -41,12 +41,19 @@ export function ActivityBar({
   activeView,
   panelOpen,
   onSelect,
+  badgeCounts,
 }: {
   views: ActivityViewDef[];
   activeView: ActivityView;
   /** Whether the panel next to the rail is showing. The rail itself is always visible. */
   panelOpen: boolean;
   onSelect: (view: ActivityView) => void;
+  /**
+   * Per-view attention counts, rendered as a small dot-with-count in the
+   * icon's corner — e.g. agent sessions that need the user. Absent or zero
+   * means no badge; the rail is narrow, so this is never a wide pill.
+   */
+  badgeCounts?: Partial<Record<ActivityView, number>>;
 }) {
   return (
     <div className="flex flex-col items-center w-12 shrink-0 h-full border-r bg-card">
@@ -64,6 +71,7 @@ export function ActivityBar({
           // Only the view actually on screen reads as selected; while the panel
           // is collapsed nothing is, so the rail shows no false "you are here".
           const isActive = panelOpen && view.id === activeView;
+          const count = badgeCounts?.[view.id] ?? 0;
           return (
             <Tooltip key={view.id}>
               <TooltipTrigger asChild>
@@ -81,9 +89,21 @@ export function ActivityBar({
                   )}
                 >
                   <Icon className="h-5 w-5" />
+                  {count > 0 && (
+                    <span
+                      aria-hidden="true"
+                      className="absolute top-1 right-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-amber-500 px-1 text-[10px] font-semibold leading-none text-white"
+                    >
+                      {count > 9 ? "9+" : count}
+                    </span>
+                  )}
                 </button>
               </TooltipTrigger>
-              <TooltipContent side="right">{view.label}</TooltipContent>
+              <TooltipContent side="right">
+                {count > 0
+                  ? `${view.label} — ${count} agent${count === 1 ? "" : "s"} need${count === 1 ? "s" : ""} you`
+                  : view.label}
+              </TooltipContent>
             </Tooltip>
           );
         })}

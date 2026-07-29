@@ -20,6 +20,63 @@ import {
 } from "@/hooks/use-agents";
 
 /**
+ * The per-session status dot plus its tooltip.
+ *
+ * `activity`/`waitingConfidence` are heuristics the backend infers from
+ * output timing and prompt-pattern matching, never certainties — copy stays
+ * hedged ("needs input"/"idle") except at high confidence, where a known
+ * prompt pattern actually matched. `status === "exited"` and a missing
+ * `activity` (older/rolling-out backend) both fall back to the dot this
+ * used to always show, so the row never renders nothing.
+ */
+function SessionIndicator({ session }: { session: AgentSession }) {
+  if (session.status === "exited") {
+    return (
+      <span title="Exited" className="shrink-0">
+        <Circle className="h-3.5 w-3.5 text-muted-foreground/60" />
+      </span>
+    );
+  }
+
+  if (session.activity === "working") {
+    return (
+      <span
+        title="Working — produced output moments ago"
+        className="relative flex h-3.5 w-3.5 shrink-0 items-center justify-center"
+      >
+        <span className="absolute inline-flex h-2.5 w-2.5 animate-ping rounded-full bg-green-400 opacity-75" />
+        <span className="relative inline-flex h-2 w-2 rounded-full bg-green-500" />
+      </span>
+    );
+  }
+
+  if (session.activity === "waiting" && session.waitingConfidence === "high") {
+    return (
+      <span title="Needs input — a known prompt pattern matched" className="shrink-0">
+        <CircleDot className="h-3.5 w-3.5 text-amber-500" />
+      </span>
+    );
+  }
+
+  if (session.activity === "waiting") {
+    return (
+      <span
+        title="Idle — quiet for a while. May be waiting on you, or just running a long build."
+        className="shrink-0"
+      >
+        <Circle className="h-3.5 w-3.5 text-amber-500/50" />
+      </span>
+    );
+  }
+
+  return (
+    <span title="Running" className="shrink-0">
+      <CircleDot className="h-3.5 w-3.5 text-green-500" />
+    </span>
+  );
+}
+
+/**
  * The Agents half of the "Terminals & Agents" rail view: start a new agent
  * session from a registered definition, see the workspace's sessions, and
  * kill a running one.
@@ -154,11 +211,7 @@ export function SidebarAgents({ workspace, wsId }: { workspace: Workspace; wsId:
             }}
             className="group flex items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent/50 cursor-pointer"
           >
-            {session.status === "running" ? (
-              <CircleDot className="h-3.5 w-3.5 shrink-0 text-green-500" />
-            ) : (
-              <Circle className="h-3.5 w-3.5 shrink-0 text-muted-foreground/60" />
-            )}
+            <SessionIndicator session={session} />
             <div className="flex-1 min-w-0">
               <div className="truncate">{session.title}</div>
               <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
@@ -170,6 +223,18 @@ export function SidebarAgents({ workspace, wsId }: { workspace: Workspace; wsId:
                     exit {session.exitCode ?? "?"}
                   </Badge>
                 )}
+                {session.status !== "exited" &&
+                  session.activity === "waiting" &&
+                  session.waitingConfidence === "high" && (
+                    <Badge variant="warning" className="px-1 py-0 text-[10px]">
+                      needs input
+                    </Badge>
+                  )}
+                {session.status !== "exited" &&
+                  session.activity === "waiting" &&
+                  session.waitingConfidence !== "high" && (
+                    <span className="text-muted-foreground/70">idle</span>
+                  )}
                 <span>{formatAge(session.lastActivityAt ?? session.createdAt)} ago</span>
               </div>
             </div>
