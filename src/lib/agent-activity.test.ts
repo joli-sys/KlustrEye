@@ -2,7 +2,6 @@ import { describe, it, expect } from "vitest";
 import type { AgentSession, RecentAgentSession } from "@/hooks/use-agents";
 import {
   agentHistoryRowState,
-  isAgentHistoryRowOpenable,
   isHighConfidenceWaiting,
   newlyWaiting,
   sortAgentHistory,
@@ -132,14 +131,9 @@ describe("agentHistoryRowState", () => {
 
   it("treats a missing hasTranscript as unavailable, never as archived", () => {
     // An older backend omits the field entirely; promising a transcript we
-    // cannot see would open an empty terminal, which reads as a bug.
+    // The row is still openable; the label just tells the user there is
+    // nothing saved to read before they click.
     expect(agentHistoryRowState(recent({ status: "exited" }))).toBe("unavailable");
-  });
-
-  it("only refuses to open the unavailable case", () => {
-    expect(isAgentHistoryRowOpenable(recent({ status: "running" }))).toBe(true);
-    expect(isAgentHistoryRowOpenable(recent({ status: "exited", hasTranscript: true }))).toBe(true);
-    expect(isAgentHistoryRowOpenable(recent({ status: "exited" }))).toBe(false);
   });
 });
 

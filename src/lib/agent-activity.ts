@@ -72,12 +72,10 @@ export function agentHistoryRowState(
   return session.hasTranscript ? "archived" : "unavailable";
 }
 
-/** Whether opening this row leads anywhere worth going. */
-export function isAgentHistoryRowOpenable(
-  session: Pick<AgentSession, "status" | "hasTranscript">
-): boolean {
-  return agentHistoryRowState(session) !== "unavailable";
-}
+// "unavailable" labels a row, it does not disable one. Every history row opens:
+// the session view explains an absent transcript itself (ws/agent.rs sends a
+// GONE_NOTICE), and a row that refuses to respond is worse than one that opens
+// and says why it is empty.
 
 /** The timestamp a history row is ordered and dated by. */
 function recencyKey(session: Pick<AgentSession, "createdAt" | "lastActivityAt">): string {

@@ -9,7 +9,6 @@ import { abbreviatePath } from "@/lib/agent-forms";
 import { formatAge } from "@/lib/utils";
 import {
   agentHistoryRowState,
-  isAgentHistoryRowOpenable,
   sortAgentHistory,
 } from "@/lib/agent-activity";
 import { useRecentAgentSessions, type RecentAgentSession } from "@/hooks/use-agents";
@@ -69,10 +68,8 @@ function SessionRow({ session }: { session: RecentAgentSession }) {
   const { openTab } = useTabStore();
 
   const state = agentHistoryRowState(session);
-  const openable = isAgentHistoryRowOpenable(session);
 
   const open = () => {
-    if (!openable) return;
     // ONE href for both calls, and `openTab` before `navigate` — see
     // `sidebar-agents.tsx`'s `openSessionTab`. Registering the tab without
     // routing to it leaves a tab the user cannot reach.
@@ -83,13 +80,7 @@ function SessionRow({ session }: { session: RecentAgentSession }) {
 
   const body = (
     <>
-      <Bot
-        className={
-          openable
-            ? "h-4 w-4 shrink-0 text-muted-foreground"
-            : "h-4 w-4 shrink-0 text-muted-foreground/40"
-        }
-      />
+      <Bot className="h-4 w-4 shrink-0 text-muted-foreground" />
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
           <span className="truncate font-medium" title={session.title}>
@@ -139,20 +130,14 @@ function SessionRow({ session }: { session: RecentAgentSession }) {
     </>
   );
 
-  // An unavailable session is deliberately NOT a button: opening it would show
-  // an empty terminal, which reads as a bug rather than as an old session.
-  if (!openable) {
-    return (
-      <div
-        aria-disabled="true"
-        className="flex items-center gap-3 px-4 py-2.5 text-sm opacity-60"
-        title="This session's output was not saved, so it can no longer be opened."
-      >
-        {body}
-      </div>
-    );
-  }
-
+  // EVERY row opens, including one with no saved transcript.
+  //
+  // These were originally inert, on the theory that an empty terminal reads as
+  // a bug. In practice it is worse: transcripts only began being saved partway
+  // through, so every pre-existing session was dead on the homepage with no way
+  // to reach its details. A row that explains itself when opened beats a row
+  // that refuses to respond — `agent-terminal.tsx` renders the "nothing was
+  // saved" case explicitly.
   return (
     <div
       role="button"
