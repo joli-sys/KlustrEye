@@ -17,6 +17,7 @@ import { WorkspaceDialog } from "@/components/workspace-dialog";
 import { Sidebar } from "@/components/sidebar";
 import { MobileSidebarDrawer } from "@/components/mobile-sidebar-drawer";
 import { TabBar } from "@/components/tab-bar";
+import { WorkspaceTabs } from "@/components/workspace-tabs";
 import { ClusterColorProvider } from "@/components/cluster-color-provider";
 
 export function WorkspaceLayout() {
@@ -98,21 +99,30 @@ export function WorkspaceLayout() {
   const bothBroken = folderBroken && allClustersMissing(workspace.clusters);
   const nothingBound = workspaceHasNoBindings(workspace);
 
-  // Repair screen: never a white screen, always a way forward.
+  // Repair screen: never a white screen, always a way forward. The workspace
+  // strip stays above it — a workspace whose bindings all broke is exactly
+  // when the user needs a one-click route to one that still works, and
+  // without it the repair screen is a dead end with a single button.
   if (bothBroken || nothingBound) {
     return (
-      <>
-        <WorkspaceBindingBanner
-          workspace={workspace}
-          mode="repair"
-          onRebind={() => setEditing(true)}
-        />
+      <div className="flex flex-col h-full min-h-0">
+        <WorkspaceTabs currentWorkspaceId={workspace.id} />
+        {/* `flex-1 min-h-0` and nothing else: repair mode centres itself with
+            `h-full`, which needs a parent of definite height and no scroll
+            container in between — same as when it was the top-level element. */}
+        <div className="flex-1 min-h-0">
+          <WorkspaceBindingBanner
+            workspace={workspace}
+            mode="repair"
+            onRebind={() => setEditing(true)}
+          />
+        </div>
         <WorkspaceDialog
           workspace={workspace}
           open={editing}
           onOpenChange={setEditing}
         />
-      </>
+      </div>
     );
   }
 
@@ -135,6 +145,10 @@ export function WorkspaceLayout() {
   return (
     <ClusterColorProvider contextName={activeContext ?? ""}>
       <div className="flex flex-col h-full min-h-0">
+        {/* Above the binding banner and the per-workspace TabBar, spanning the
+            whole width: the strip belongs to the app, not to this workspace,
+            and the banner underneath it belongs to the tab it sits below. */}
+        <WorkspaceTabs currentWorkspaceId={workspace.id} />
         {(folderBroken || someClustersMissing) && (
           <WorkspaceBindingBanner
             workspace={workspace}

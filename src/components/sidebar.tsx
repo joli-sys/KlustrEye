@@ -10,7 +10,6 @@ import { useAgentSessions, type AgentSession } from "@/hooks/use-agents";
 import { newlyWaiting, waitingCount } from "@/lib/agent-activity";
 import { activeClusterName } from "@/lib/workspace-clusters";
 import { ActivityBar, availableViews } from "@/components/activity-bar";
-import { WorkspaceSwitcher } from "@/components/workspace-switcher";
 import { SidebarExplorer } from "@/components/sidebar-explorer";
 import { SidebarSearch } from "@/components/sidebar-search";
 import { SidebarCluster } from "@/components/sidebar-cluster";
@@ -115,73 +114,60 @@ export function Sidebar({ workspace, contextName, onNavigate, forceExpanded }: {
   };
 
   return (
-    /* A column, not a row: the workspace switcher spans the full width above
-       BOTH the rail and the panel — VS Code's position for the folder name,
-       and the only spot that stays visible when the panel is collapsed. The
-       rail and panel keep their own h-11 headers below it, so the two columns
-       stay aligned with each other in either state. */
-    <div className="flex flex-col h-full shrink-0">
-      <WorkspaceSwitcher
-        workspace={workspace}
+    <div className="flex h-full shrink-0">
+      <ActivityBar
+        views={views}
+        activeView={activeView}
         panelOpen={panelOpen}
-        onNavigate={onNavigate}
+        onSelect={handleSelect}
+        badgeCounts={{ terminals: waitingCount(agentSessions) }}
       />
 
-      <div className="flex flex-1 min-h-0">
-        <ActivityBar
-          views={views}
-          activeView={activeView}
-          panelOpen={panelOpen}
-          onSelect={handleSelect}
-          badgeCounts={{ terminals: waitingCount(agentSessions) }}
-        />
+      {panelOpen && (
+        <aside className="flex flex-col h-full w-56 shrink-0 border-r bg-card">
+          <div className="flex items-center justify-between gap-2 h-11 shrink-0 border-b pl-3 pr-1">
+            <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider truncate">
+              {activeLabel}
+            </span>
+            {!forceExpanded && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="shrink-0 h-7 w-7"
+                onClick={() => setSidebarOpen(false)}
+                title="Collapse panel"
+              >
+                <PanelLeftClose className="h-4 w-4" />
+              </Button>
+            )}
+          </div>
 
-        {panelOpen && (
-          <aside className="flex flex-col h-full w-56 shrink-0 border-r bg-card">
-            <div className="flex items-center justify-between gap-2 h-11 shrink-0 border-b pl-3 pr-1">
-              <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider truncate">
-                {activeLabel}
-              </span>
-              {!forceExpanded && (
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="shrink-0 h-7 w-7"
-                  onClick={() => setSidebarOpen(false)}
-                  title="Collapse panel"
-                >
-                  <PanelLeftClose className="h-4 w-4" />
-                </Button>
-              )}
-            </div>
-
-            <div
-              className={cn(
-                "flex-1 min-h-0",
-                // The cluster view manages its own scrolling so its settings
-                // footer can stay pinned; the rest just scroll as one column.
-                activeView === "cluster" ? "overflow-hidden" : "overflow-y-auto py-2"
-              )}
-            >
-              {activeView === "explorer" && <SidebarExplorer workspace={workspace} />}
-              {activeView === "search" && (
-                <SidebarSearch workspace={workspace} wsId={wsId} />
-              )}
-              {activeView === "cluster" && basePath && effectiveContext && (
-                <SidebarCluster
-                  workspace={workspace}
-                  contextName={effectiveContext}
-                  basePath={basePath}
-                  onNavigate={onNavigate}
-                />
-              )}
-              {activeView === "terminals" && (
-                <SidebarAgents workspace={workspace} wsId={wsId} />
-              )}
-            </div>
-          </aside>
-        )}
-      </div>
+          <div
+            className={cn(
+              "flex-1 min-h-0",
+              // The cluster view manages its own scrolling so its settings
+              // footer can stay pinned; the rest just scroll as one column.
+              activeView === "cluster" ? "overflow-hidden" : "overflow-y-auto py-2"
+            )}
+          >
+            {activeView === "explorer" && <SidebarExplorer workspace={workspace} />}
+            {activeView === "search" && (
+              <SidebarSearch workspace={workspace} wsId={wsId} />
+            )}
+            {activeView === "cluster" && basePath && effectiveContext && (
+              <SidebarCluster
+                workspace={workspace}
+                contextName={effectiveContext}
+                basePath={basePath}
+                onNavigate={onNavigate}
+              />
+            )}
+            {activeView === "terminals" && (
+              <SidebarAgents workspace={workspace} wsId={wsId} />
+            )}
+          </div>
+        </aside>
+      )}
     </div>
   );
 }
