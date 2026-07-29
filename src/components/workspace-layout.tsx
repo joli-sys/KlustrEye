@@ -7,6 +7,10 @@ import { hasDirtyModels, releaseAllClean } from "@/lib/editor/model-registry";
 import { Skeleton } from "@/components/ui/skeleton";
 import { WorkspaceBindingBanner } from "@/components/workspace-binding-banner";
 import { WorkspaceDialog } from "@/components/workspace-dialog";
+import { Sidebar } from "@/components/sidebar";
+import { MobileSidebarDrawer } from "@/components/mobile-sidebar-drawer";
+import { TabBar } from "@/components/tab-bar";
+import { ClusterColorProvider } from "@/components/cluster-color-provider";
 
 export function WorkspaceLayout() {
   const { wsId } = useParams<{ wsId: string }>();
@@ -89,19 +93,43 @@ export function WorkspaceLayout() {
     );
   }
 
+  // The workspace binding, not a route param: outside `clusters/:contextName`
+  // there is none, and the sidebar still has to render.
+  const boundContext = workspace.contextName ?? undefined;
+
+  /**
+   * Sidebar and tab bar are WORKSPACE chrome, so they live here rather than in
+   * ClusterLayout. Mounted a level down they were unreachable from the two
+   * sibling routes — a folder-only workspace got no file tree at all, and
+   * opening a file (`files/*`) dropped both the tree and the tabs.
+   *
+   * No padding on <main>: the file editor wants the whole area for Monaco.
+   * Cluster pages keep their own `p-4` scroll container inside ClusterLayout.
+   */
   return (
-    <div className="flex flex-col h-full min-h-0">
-      {(folderBroken || contextBroken) && (
-        <WorkspaceBindingBanner
-          workspace={workspace}
-          mode="banner"
-          onRebind={() => setEditing(true)}
-        />
-      )}
-      <div className="flex-1 min-h-0">
-        <Outlet />
+    <ClusterColorProvider contextName={workspace.contextName ?? ""}>
+      <div className="flex flex-col h-full min-h-0">
+        {(folderBroken || contextBroken) && (
+          <WorkspaceBindingBanner
+            workspace={workspace}
+            mode="banner"
+            onRebind={() => setEditing(true)}
+          />
+        )}
+        <div className="flex flex-1 min-h-0 overflow-hidden">
+          <div className="hidden md:flex">
+            <Sidebar workspace={workspace} contextName={boundContext} />
+          </div>
+          <MobileSidebarDrawer workspace={workspace} contextName={boundContext} />
+          <div className="flex flex-col flex-1 overflow-hidden">
+            <TabBar wsId={wsId ?? ""} />
+            <main className="flex-1 min-h-0 overflow-hidden">
+              <Outlet />
+            </main>
+          </div>
+        </div>
+        <WorkspaceDialog workspace={workspace} open={editing} onOpenChange={setEditing} />
       </div>
-      <WorkspaceDialog workspace={workspace} open={editing} onOpenChange={setEditing} />
-    </div>
+    </ClusterColorProvider>
   );
 }

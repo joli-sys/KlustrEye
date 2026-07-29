@@ -34,7 +34,13 @@ const iconMap: Record<string, React.ComponentType<{ className?: string }>> = {
 
 const pagePlugins = getPluginsWithPages();
 
-export function Sidebar({ workspace, contextName, onNavigate, forceExpanded }: { workspace: Workspace; contextName: string; onNavigate?: () => void; forceExpanded?: boolean }) {
+/**
+ * `contextName` is optional: a folder-only workspace is a supported binding, and
+ * the sidebar is mounted by WorkspaceLayout on routes that have no
+ * `:contextName` param at all. Without a cluster the Files and Terminals
+ * sections still render; everything cluster-scoped is gated off.
+ */
+export function Sidebar({ workspace, contextName, onNavigate, forceExpanded }: { workspace: Workspace; contextName?: string; onNavigate?: () => void; forceExpanded?: boolean }) {
   const pathname = useLocation().pathname;
   const navigate = useNavigate();
   const { sidebarOpen: _sidebarOpen, toggleSidebar, setWorkspaceNamespace } = useUIStore();
@@ -42,7 +48,8 @@ export function Sidebar({ workspace, contextName, onNavigate, forceExpanded }: {
   const { openTab } = useTabStore();
   const { searches: savedSearches, removeSearch } = useSavedSearches();
   const wsId = useWorkspaceId();
-  const basePath = clusterPath(wsId, contextName, "");
+  const effectiveContext = contextName ?? workspace.contextName ?? undefined;
+  const basePath = effectiveContext ? clusterPath(wsId, effectiveContext, "") : null;
 
   return (
     <aside
@@ -62,9 +69,11 @@ export function Sidebar({ workspace, contextName, onNavigate, forceExpanded }: {
         </Button>
       </div>
 
-      <div className="border-b">
-        <ClusterSwitcher contextName={contextName} sidebarOpen={sidebarOpen} />
-      </div>
+      {effectiveContext && (
+        <div className="border-b">
+          <ClusterSwitcher contextName={effectiveContext} sidebarOpen={sidebarOpen} />
+        </div>
+      )}
 
       <nav className="flex-1 overflow-y-auto py-2">
         {workspace.folderPath && sidebarOpen && (
@@ -82,7 +91,7 @@ export function Sidebar({ workspace, contextName, onNavigate, forceExpanded }: {
             )}
           </div>
         )}
-        {workspace.contextName && (
+        {workspace.contextName && basePath && (
         <>
         {SIDEBAR_SECTIONS.map((section, i) => (
           <div key={i} className="mb-2">
@@ -244,6 +253,9 @@ export function Sidebar({ workspace, contextName, onNavigate, forceExpanded }: {
         )}
       </nav>
 
+      {/* Cluster settings — there is no workspace-level settings page to fall
+          back to, so the whole footer goes away without a cluster. */}
+      {basePath && (
       <div className="border-t p-2">
         <Link
           to={`${basePath}/settings`}
@@ -257,6 +269,7 @@ export function Sidebar({ workspace, contextName, onNavigate, forceExpanded }: {
           {sidebarOpen && <span>Settings</span>}
         </Link>
       </div>
+      )}
     </aside>
   );
 }

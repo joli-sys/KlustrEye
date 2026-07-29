@@ -4,7 +4,7 @@ import { useUIStore } from "@/lib/stores/ui-store";
 import { Sidebar } from "@/components/sidebar";
 import type { Workspace } from "@/hooks/use-workspaces";
 
-export function MobileSidebarDrawer({ workspace, contextName }: { workspace: Workspace; contextName: string }) {
+export function MobileSidebarDrawer({ workspace, contextName }: { workspace: Workspace; contextName?: string }) {
   const { mobileSidebarOpen, setMobileSidebarOpen } = useUIStore();
 
   if (!mobileSidebarOpen) return null;
