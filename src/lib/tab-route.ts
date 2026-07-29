@@ -94,6 +94,21 @@ export function deriveTabTargetFromPath(pathname: string): TabTarget | null {
     return { kind: "k8s", title: deriveTitleFromPath(pathname) };
   }
 
+  if (section === "agents") {
+    // `/w/:wsId/agents` with no session id matches no route — the list of
+    // sessions lives in the sidebar, not at a URL of its own.
+    if (parts.length < 4) return null;
+    return {
+      kind: "agent",
+      // A session id is a uuid, not a label. The real title is chosen when the
+      // session is opened and preserved by `syncTabToLocation` below; this
+      // only names a tab opened straight from a URL, where the path offers
+      // nothing better.
+      title: "Agent",
+      payload: { sessionId: safeDecode(parts[3]) },
+    };
+  }
+
   return null;
 }
 
@@ -136,8 +151,9 @@ export function syncTabToLocation(
   if (!active) return;
 
   if (active.kind === target.kind) {
-    // Only a k8s tab takes its name from the path; a file tab keeps the name
-    // it was opened with.
+    // Only a k8s tab takes its name from the path. A file tab keeps its
+    // filename and an agent tab its session title — neither survives a round
+    // trip through the URL, which carries a splat and a uuid respectively.
     const title = target.kind === "k8s" ? target.title : active.title;
     store.updateActiveTab(wsId, fullHref, title);
     return;

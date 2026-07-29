@@ -9,6 +9,7 @@ import { WorkspaceLayout } from "@/components/workspace-layout";
 import { LegacyClusterRedirect } from "@/components/legacy-cluster-redirect";
 import { WorkspaceHome } from "@/components/workspace-home";
 import { FileEditor } from "@/components/file-editor";
+import { AgentTerminal } from "@/components/agent-terminal";
 
 // Pages
 import HomePage from "@/app/page";
@@ -82,6 +83,8 @@ export default function App() {
                 <Route index element={<WorkspaceHome />} />
                 {/* Splat carries the workspace-relative file path. */}
                 <Route path="files/*" element={<FileEditor />} />
+                {/* Attaches to a running PTY; leaving does not stop it. */}
+                <Route path="agents/:sessionId" element={<AgentTerminal />} />
                 <Route path="clusters/:contextName" element={<ClusterLayout />}>
                 <Route index element={<Navigate to="overview" replace />} />
                 <Route path="overview" element={<OverviewPage />} />
