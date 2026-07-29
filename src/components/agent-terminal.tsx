@@ -85,6 +85,23 @@ const SEARCH_OPTIONS: ISearchOptions = {
 };
 
 /**
+ * Run a search-addon call without letting a failure take down the pane.
+ *
+ * The addon threw "You must set the allowProposedApi option to true" straight
+ * through React, so the ErrorBoundary replaced the WHOLE agent session — a live
+ * terminal lost because a search failed. The option is set now
+ * (terminal-inner.tsx), but a search is never worth the session.
+ */
+function safeSearch(run: () => void): void {
+  try {
+    run();
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.error("Terminal search failed:", e);
+  }
+}
+
+/**
  * One agent session's PTY, attached over `/ws/agent/:session_id`, wrapped in
  * chat-like chrome: a header, scrollback search, a jump-to-latest control and
  * a sticky composer.
@@ -235,11 +252,13 @@ export function AgentTerminal() {
   useEffect(() => {
     if (!search || !searchOpen) return;
     if (!searchQuery) {
-      search.clearDecorations();
+      safeSearch(() => search.clearDecorations());
       setMatches(null);
       return;
     }
-    search.findNext(searchQuery, { ...SEARCH_OPTIONS, incremental: true });
+    safeSearch(() =>
+      search.findNext(searchQuery, { ...SEARCH_OPTIONS, incremental: true })
+    );
   }, [search, searchOpen, searchQuery]);
 
   useEffect(() => {
@@ -282,7 +301,7 @@ export function AgentTerminal() {
     setSearchOpen(false);
     setSearchQuery("");
     setMatches(null);
-    search?.clearDecorations();
+    safeSearch(() => search?.clearDecorations());
     term?.focus();
   }, [search, term]);
 
@@ -294,8 +313,8 @@ export function AgentTerminal() {
     }
     if (e.key !== "Enter" || !searchQuery) return;
     e.preventDefault();
-    if (e.shiftKey) search?.findPrevious(searchQuery, SEARCH_OPTIONS);
-    else search?.findNext(searchQuery, SEARCH_OPTIONS);
+    if (e.shiftKey) safeSearch(() => search?.findPrevious(searchQuery, SEARCH_OPTIONS));
+    else safeSearch(() => search?.findNext(searchQuery, SEARCH_OPTIONS));
   };
 
   const submit = (e: FormEvent) => {
@@ -431,7 +450,7 @@ export function AgentTerminal() {
             aria-label="Previous match"
             title="Previous match (Shift+Enter)"
             disabled={!searchQuery || !search}
-            onClick={() => search?.findPrevious(searchQuery, SEARCH_OPTIONS)}
+            onClick={() => safeSearch(() => search?.findPrevious(searchQuery, SEARCH_OPTIONS))}
           >
             <ChevronUp className="h-3.5 w-3.5" />
           </Button>
@@ -442,7 +461,7 @@ export function AgentTerminal() {
             aria-label="Next match"
             title="Next match (Enter)"
             disabled={!searchQuery || !search}
-            onClick={() => search?.findNext(searchQuery, SEARCH_OPTIONS)}
+            onClick={() => safeSearch(() => search?.findNext(searchQuery, SEARCH_OPTIONS))}
           >
             <ChevronDown className="h-3.5 w-3.5" />
           </Button>

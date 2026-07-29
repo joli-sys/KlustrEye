@@ -53,6 +53,12 @@ export function TerminalInner({ wsUrl, className, connectMessage, onReady }: Ter
       },
       convertEol: false,
       scrollback: 5000,
+      // @xterm/addon-search highlights matches through xterm's decoration API,
+      // which is still "proposed" and throws "You must set the allowProposedApi
+      // option to true to use proposed API" on the first search otherwise.
+      // Harmless for the consumers that do not search — it only permits the
+      // API, it does not change behaviour.
+      allowProposedApi: true,
     });
 
     const fitAddon = new FitAddon();
