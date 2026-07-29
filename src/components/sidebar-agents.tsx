@@ -1,20 +1,33 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Plus, Square, CircleDot, Circle } from "lucide-react";
+import {
+  Plus,
+  Square,
+  CircleDot,
+  Circle,
+  FolderOpen,
+  Pencil,
+  SlidersHorizontal,
+} from "lucide-react";
 import { cn, formatAge } from "@/lib/utils";
 import { workspacePath } from "@/lib/paths";
+import { abbreviatePath } from "@/lib/agent-forms";
+import { isTauri, pickFolder } from "@/lib/folder-picker";
 import { useTabStore } from "@/lib/stores/tab-store";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import { useToast } from "@/components/ui/toast";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
+import { AgentDefinitionsDialog } from "@/components/agent-definitions-dialog";
 import type { Workspace } from "@/hooks/use-workspaces";
 import {
   useAgentDefinitions,
   useAgentSessions,
   useCreateAgentSession,
   useKillAgentSession,
+  useRenameAgentSession,
   AgentSessionError,
   type AgentSession,
 } from "@/hooks/use-agents";
@@ -78,12 +91,13 @@ function SessionIndicator({ session }: { session: AgentSession }) {
 
 /**
  * The Agents half of the "Terminals & Agents" rail view: start a new agent
- * session from a registered definition, see the workspace's sessions, and
- * kill a running one.
+ * session from a registered definition in a working directory of your choice,
+ * see the workspace's sessions, rename one, and kill one.
  *
- * Mirrors `SidebarExplorer`/`SidebarSearch`'s degrade pattern — no folder
- * bound means the backend would 400 on every create, so the control is never
- * offered rather than left to fail after a click.
+ * Unlike `SidebarExplorer`/`SidebarSearch` this view does NOT degrade to
+ * nothing when no folder is bound: a session carries its own working
+ * directory, so an unbound workspace can still run an agent — the folder field
+ * just becomes required rather than prefilled.
  */
 export function SidebarAgents({ workspace, wsId }: { workspace: Workspace; wsId: string }) {
   const navigate = useNavigate();
@@ -95,10 +109,28 @@ export function SidebarAgents({ workspace, wsId }: { workspace: Workspace; wsId:
   const { data: sessions, isLoading } = useAgentSessions(wsId);
   const createSession = useCreateAgentSession(wsId);
   const killSession = useKillAgentSession(wsId);
+  const renameSession = useRenameAgentSession(wsId);
 
   const [selectedDefinitionId, setSelectedDefinitionId] = useState("");
+  const [cwd, setCwd] = useState(workspace.folderPath ?? "");
+  const [definitionsOpen, setDefinitionsOpen] = useState(false);
+
+  /** `null` = nobody is being renamed; otherwise the session id being edited. */
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState("");
+
+  // Follow the workspace's binding: rebinding the folder should move where the
+  // NEXT session starts, and a stale path left in the field would be a quiet
+  // trap. A path typed for one session is deliberately kept until then.
+  useEffect(() => {
+    setCwd(workspace.folderPath ?? "");
+  }, [workspace.folderPath]);
 
   const hasFolder = !!workspace.folderPath;
+  const trimmedCwd = cwd.trim();
+  // Either an explicit directory or a bound folder to fall back on. Checked
+  // here so the user is never sent into a backend 400 by a click.
+  const hasSomewhereToRun = !!trimmedCwd || hasFolder;
 
   const openSessionTab = (session: AgentSession) => {
     // ONE href for both calls — see file-tree.tsx's handleClick for why a
@@ -108,16 +140,41 @@ export function SidebarAgents({ workspace, wsId }: { workspace: Workspace; wsId:
     navigate(href);
   };
 
-  const handleCreate = async () => {
-    if (!selectedDefinitionId) return;
+  async function handleBrowse() {
     try {
-      const session = await createSession.mutateAsync({ definitionId: selectedDefinitionId });
+      const selected = await pickFolder();
+      // null means the user cancelled — leave the field alone, say nothing.
+      if (selected) setCwd(selected);
+    } catch (e) {
+      // Without this the rejection was unhandled and the button looked inert.
+      // eslint-disable-next-line no-console
+      console.error("Folder picker failed:", e);
+      addToast({
+        title: "Could not open the folder picker",
+        description:
+          (e as Error).message + " You can still type an absolute path into the field.",
+        variant: "destructive",
+      });
+    }
+  }
+
+  const handleCreate = async () => {
+    if (!selectedDefinitionId || !hasSomewhereToRun) return;
+    try {
+      const session = await createSession.mutateAsync({
+        definitionId: selectedDefinitionId,
+        // Omitted rather than sent empty, so the backend falls back to the
+        // workspace folder instead of resolving "".
+        cwd: trimmedCwd || undefined,
+      });
       openSessionTab(session);
     } catch (err) {
       if (err instanceof AgentSessionError && err.status === 400) {
         addToast({
           title: "Can't start agent",
-          description: "Bind a folder to this workspace to run an agent.",
+          // Verbatim: a 400 here says which of "nowhere to run" and "that
+          // directory doesn't exist" it was, which fixed copy cannot.
+          description: err.message || "Choose a working directory that exists.",
           variant: "destructive",
         });
       } else if (err instanceof AgentSessionError && err.status === 429) {
@@ -155,19 +212,70 @@ export function SidebarAgents({ workspace, wsId }: { workspace: Workspace; wsId:
     }
   };
 
-  if (!hasFolder) {
-    return (
-      <div className="px-3 py-2">
-        <p className="text-xs text-muted-foreground">
-          Bind a folder to this workspace to run an agent.
-        </p>
-      </div>
-    );
-  }
+  const startRename = (session: AgentSession) => {
+    setRenamingId(session.id);
+    setRenameValue(session.title);
+  };
+
+  /**
+   * Commits the inline rename.
+   *
+   * A blank name is rejected here rather than by the backend — the round trip
+   * would only come back saying the same thing, and the field stays open with
+   * the user's text intact either way.
+   *
+   * Renaming is permanent: the backend stops auto-titling this session from
+   * its output for good. Nothing here ever writes a title back, so a chosen
+   * name cannot drift.
+   */
+  const commitRename = async (session: AgentSession) => {
+    const title = renameValue.trim();
+    if (!title) {
+      addToast({
+        title: "Name required",
+        description: "A session name can't be blank.",
+        variant: "destructive",
+      });
+      return;
+    }
+    if (title === session.title) {
+      setRenamingId(null);
+      return;
+    }
+
+    try {
+      await renameSession.mutateAsync({ id: session.id, title });
+      setRenamingId(null);
+    } catch (err) {
+      addToast({
+        title: "Failed to rename session",
+        description: (err as Error).message,
+        variant: "destructive",
+      });
+      // A session that no longer exists cannot be renamed by trying harder —
+      // close the editor rather than leaving the user typing into nothing.
+      if (err instanceof AgentSessionError && err.status === 404) setRenamingId(null);
+    }
+  };
 
   return (
-    <div className="flex flex-col gap-2 px-3 py-2">
-      <div className="flex items-center gap-1.5">
+    <div className="flex flex-col gap-3 px-3 py-2">
+      <div className="flex flex-col gap-1.5">
+        <div className="flex items-center justify-between gap-1">
+          <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+            New session
+          </span>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-6 w-6 shrink-0"
+            title="Manage agents"
+            onClick={() => setDefinitionsOpen(true)}
+          >
+            <SlidersHorizontal className="h-3.5 w-3.5" />
+          </Button>
+        </div>
+
         <Select
           value={selectedDefinitionId}
           onChange={(e) => setSelectedDefinitionId(e.target.value)}
@@ -176,88 +284,185 @@ export function SidebarAgents({ workspace, wsId }: { workspace: Workspace; wsId:
           className="h-8 text-xs"
           disabled={!definitions || definitions.length === 0}
         />
+
+        <div className="flex items-center gap-1">
+          <Input
+            value={cwd}
+            onChange={(e) => setCwd(e.target.value)}
+            placeholder={hasFolder ? workspace.folderPath ?? "" : "/path/to/folder"}
+            title={trimmedCwd || "Working directory for the new session"}
+            className="h-8 text-xs"
+          />
+          {isTauri() && (
+            <Button
+              variant="outline"
+              size="icon"
+              className="h-8 w-8 shrink-0"
+              title="Browse for a folder"
+              onClick={handleBrowse}
+            >
+              <FolderOpen className="h-3.5 w-3.5" />
+            </Button>
+          )}
+        </div>
+
+        {!hasSomewhereToRun && (
+          <p className="text-xs text-muted-foreground">
+            This workspace has no folder bound — enter a working directory to run an
+            agent.
+          </p>
+        )}
+
         <Button
           variant="outline"
-          size="icon"
-          className="h-8 w-8 shrink-0"
-          title="New session"
-          disabled={!selectedDefinitionId || createSession.isPending}
+          size="sm"
+          className="h-8 w-full text-xs"
+          disabled={!selectedDefinitionId || !hasSomewhereToRun || createSession.isPending}
           onClick={handleCreate}
         >
-          <Plus className="h-4 w-4" />
+          <Plus className="h-3.5 w-3.5" />
+          {createSession.isPending ? "Starting…" : "New session"}
         </Button>
-      </div>
 
-      {definitions && definitions.length === 0 && (
-        <p className="text-xs text-muted-foreground">No agent definitions configured.</p>
-      )}
+        {definitions && definitions.length === 0 && (
+          <p className="text-xs text-muted-foreground">
+            No agents configured yet — add one under “Manage agents”.
+          </p>
+        )}
+      </div>
 
       <div className="flex flex-col gap-1">
         {isLoading && <p className="text-xs text-muted-foreground">Loading sessions…</p>}
         {!isLoading && sessions && sessions.length === 0 && (
           <p className="text-xs text-muted-foreground">No agent sessions yet.</p>
         )}
-        {sessions?.map((session) => (
-          <div
-            key={session.id}
-            role="button"
-            tabIndex={0}
-            onClick={() => openSessionTab(session)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" || e.key === " ") {
-                e.preventDefault();
-                openSessionTab(session);
-              }
-            }}
-            className="group flex items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent/50 cursor-pointer"
-          >
-            <SessionIndicator session={session} />
-            <div className="flex-1 min-w-0">
-              <div className="truncate">{session.title}</div>
-              <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
-                {session.status === "exited" && (
-                  <Badge
-                    variant={session.exitCode === 0 ? "secondary" : "destructive"}
-                    className="px-1 py-0 text-[10px]"
-                  >
-                    exit {session.exitCode ?? "?"}
-                  </Badge>
+        {sessions?.map((session) => {
+          const isRenaming = renamingId === session.id;
+          return (
+            <div
+              key={session.id}
+              role="button"
+              tabIndex={0}
+              // While the inline editor is open the row is a form, not a
+              // button — opening the tab under the user's cursor mid-rename
+              // would throw the edit away.
+              onClick={() => {
+                if (!isRenaming) openSessionTab(session);
+              }}
+              onKeyDown={(e) => {
+                if (isRenaming) return;
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  openSessionTab(session);
+                }
+              }}
+              className="group flex items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent/50 cursor-pointer"
+            >
+              <SessionIndicator session={session} />
+              <div className="flex-1 min-w-0">
+                {isRenaming ? (
+                  <input
+                    // Keystrokes must not reach the row: its Enter/Space
+                    // handler would open the tab out from under the editor.
+                    value={renameValue}
+                    autoFocus
+                    onChange={(e) => setRenameValue(e.target.value)}
+                    onClick={(e) => e.stopPropagation()}
+                    onKeyDown={(e) => {
+                      e.stopPropagation();
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        commitRename(session);
+                      } else if (e.key === "Escape") {
+                        e.preventDefault();
+                        setRenamingId(null);
+                      }
+                    }}
+                    // Clicking away discards rather than saves: an accidental
+                    // commit is harder to notice than a lost keystroke, and a
+                    // rename is permanent.
+                    onBlur={() => setRenamingId(null)}
+                    title="Enter to save, Escape to cancel"
+                    className="w-full rounded border border-input bg-transparent px-1 py-0.5 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                  />
+                ) : (
+                  <div className="truncate" title={session.title}>
+                    {session.title}
+                  </div>
                 )}
-                {session.status !== "exited" &&
-                  session.activity === "waiting" &&
-                  session.waitingConfidence === "high" && (
-                    <Badge variant="warning" className="px-1 py-0 text-[10px]">
-                      needs input
+                {/* Two sessions in one workspace are otherwise
+                    indistinguishable, and they no longer have to share a
+                    directory. Older rows carry no cwd at all — show nothing
+                    rather than guess. */}
+                {session.cwd && (
+                  <div
+                    className="truncate font-mono text-[10px] text-muted-foreground/80"
+                    title={session.cwd}
+                  >
+                    {abbreviatePath(session.cwd)}
+                  </div>
+                )}
+                <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
+                  {session.status === "exited" && (
+                    <Badge
+                      variant={session.exitCode === 0 ? "secondary" : "destructive"}
+                      className="px-1 py-0 text-[10px]"
+                    >
+                      exit {session.exitCode ?? "?"}
                     </Badge>
                   )}
-                {session.status !== "exited" &&
-                  session.activity === "waiting" &&
-                  session.waitingConfidence !== "high" && (
-                    <span className="text-muted-foreground/70">idle</span>
-                  )}
-                <span>{formatAge(session.lastActivityAt ?? session.createdAt)} ago</span>
+                  {session.status !== "exited" &&
+                    session.activity === "waiting" &&
+                    session.waitingConfidence === "high" && (
+                      <Badge variant="warning" className="px-1 py-0 text-[10px]">
+                        needs input
+                      </Badge>
+                    )}
+                  {session.status !== "exited" &&
+                    session.activity === "waiting" &&
+                    session.waitingConfidence !== "high" && (
+                      <span className="text-muted-foreground/70">idle</span>
+                    )}
+                  <span>{formatAge(session.lastActivityAt ?? session.createdAt)} ago</span>
+                </div>
               </div>
+              {!isRenaming && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-6 w-6 shrink-0 opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
+                  title="Rename session"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    startRename(session);
+                  }}
+                >
+                  <Pencil className="h-3 w-3" />
+                </Button>
+              )}
+              {session.status === "running" && !isRenaming && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className={cn(
+                    "h-6 w-6 shrink-0 opacity-0 group-hover:opacity-100 focus-visible:opacity-100",
+                    killSession.isPending && "opacity-100"
+                  )}
+                  title="Kill session"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleKill(session);
+                  }}
+                >
+                  <Square className="h-3 w-3" />
+                </Button>
+              )}
             </div>
-            {session.status === "running" && (
-              <Button
-                variant="ghost"
-                size="icon"
-                className={cn(
-                  "h-6 w-6 shrink-0 opacity-0 group-hover:opacity-100",
-                  killSession.isPending && "opacity-100"
-                )}
-                title="Kill session"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleKill(session);
-                }}
-              >
-                <Square className="h-3 w-3" />
-              </Button>
-            )}
-          </div>
-        ))}
+          );
+        })}
       </div>
+
+      <AgentDefinitionsDialog open={definitionsOpen} onOpenChange={setDefinitionsOpen} />
     </div>
   );
 }

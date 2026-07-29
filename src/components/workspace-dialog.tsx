@@ -17,49 +17,15 @@ import {
   type Workspace,
 } from "@/hooks/use-workspaces";
 import { orderedClusters } from "@/lib/workspace-clusters";
+// Shared with the agents sidebar's folder field — see `lib/folder-picker.ts`
+// for why cancel and failure must stay distinguishable.
+import { isTauri, pickFolder } from "@/lib/folder-picker";
 import { FolderOpen, ChevronUp, ChevronDown, X, AlertCircle } from "lucide-react";
 
 interface WorkspaceDialogProps {
   workspace?: Workspace | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
-}
-
-// Tauri injects __TAURI_INTERNALS__; in browser dev mode there is no
-// native picker, so the user types a path instead.
-function isTauri(): boolean {
-  return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
-}
-
-/**
- * Opens the native directory picker.
- *
- * Returns the chosen path, or `null` when the user cancelled — cancelling is
- * the normal case, not a failure, and must stay distinguishable from an error.
- * Anything that goes wrong THROWS so the caller can surface it: an earlier
- * version swallowed every outcome into `null`, so a failing picker was
- * indistinguishable from a cancelled one and the button appeared to do nothing.
- */
-async function pickFolder(): Promise<string | null> {
-  if (!isTauri()) {
-    throw new Error("Native folder picker is only available in the desktop app.");
-  }
-
-  const mod = await import("@tauri-apps/plugin-dialog");
-  const selected = await mod.open({ directory: true, multiple: false });
-
-  // Cancelled.
-  if (selected === null || selected === undefined) return null;
-  if (typeof selected === "string") return selected;
-  // `multiple: false` should never yield an array, but a plugin-version skew
-  // between the JS and Rust sides could. Take the first rather than silently
-  // returning nothing.
-  if (Array.isArray(selected) && typeof selected[0] === "string") return selected[0];
-
-  throw new Error(
-    `Folder picker returned an unexpected value (${typeof selected}). ` +
-      "This usually means the JS and Rust tauri-plugin-dialog versions disagree."
-  );
 }
 
 export function WorkspaceDialog({ workspace, open, onOpenChange }: WorkspaceDialogProps) {
