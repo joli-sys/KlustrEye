@@ -25,8 +25,10 @@ use std::collections::VecDeque;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use dashmap::DashMap;
+use regex::Regex;
 use portable_pty::{native_pty_system, ChildKiller, CommandBuilder, MasterPty, PtySize};
 use sqlx::SqlitePool;
 use tokio::sync::{broadcast, oneshot};
@@ -53,6 +55,17 @@ const PTY_CHANNEL_CAPACITY: usize = 64;
 /// `last_activity_at` is a coarse "is anything happening" signal, not an audit
 /// log. Writing it per output chunk would hammer SQLite for no benefit.
 const ACTIVITY_TOUCH_INTERVAL_SECS: i64 = 10;
+
+/// How recently a session must have produced output to count as `working`.
+///
+/// Long enough that the pauses inside a streaming response do not flicker the
+/// indicator, short enough that arriving at a prompt shows up right away.
+pub const ACTIVITY_WORKING_WINDOW: Duration = Duration::from_millis(1500);
+
+/// How much of the scrollback tail is searched for a prompt pattern. A prompt
+/// is the last thing on screen; scanning further back would only let an old,
+/// already-answered question keep reporting `high` confidence forever.
+pub const PROMPT_SCAN_BYTES: usize = 2048;
 
 /// Grace period between SIGTERM and SIGKILL when killing a session's process
 /// group.
@@ -161,6 +174,13 @@ impl ScrollbackBuffer {
         out.extend_from_slice(a);
         out.extend_from_slice(b);
         out
+    }
+
+    /// The most recent `n` retained bytes. Used for prompt detection, which
+    /// only ever cares about what is currently on screen.
+    pub fn tail(&self, n: usize) -> Vec<u8> {
+        let skip = self.buf.len().saturating_sub(n);
+        self.buf.iter().skip(skip).copied().collect()
     }
 }
 
@@ -277,6 +297,138 @@ pub async fn resolve_workspace_cwd(
 }
 
 // ---------------------------------------------------------------------------
+// Activity heuristic (pure — see tests)
+// ---------------------------------------------------------------------------
+
+/// Whether a session looks busy or looks like it wants the user.
+///
+/// **This is inferred, not observed.** A PTY yields bytes, not intent: there is
+/// no portable way to ask whether a child is blocked in `read()`. So `working`
+/// and `waiting` are derived purely from *output recency* — an agent streams
+/// while it thinks and falls silent at a prompt, which makes silence a decent
+/// proxy for "wants you". It is only a proxy: a long silent build reads as
+/// `waiting` too. Only `exited` is authoritative, and it comes from the reaped
+/// child, not from this guess.
+///
+/// Kept distinct from [`SessionStatus`], which is the fact of the matter.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Activity {
+    Working,
+    Waiting,
+    Exited,
+}
+
+impl Activity {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Activity::Working => "working",
+            Activity::Waiting => "waiting",
+            Activity::Exited => "exited",
+        }
+    }
+}
+
+/// How much the `waiting` guess should be trusted. `High` means the scrollback
+/// tail matched one of the definition's prompt patterns, i.e. the agent
+/// visibly printed a question; `Low` means it is merely quiet.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WaitingConfidence {
+    High,
+    Low,
+}
+
+impl WaitingConfidence {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            WaitingConfidence::High => "high",
+            WaitingConfidence::Low => "low",
+        }
+    }
+}
+
+/// The derivation itself. A dead process is `exited` no matter how recently it
+/// spoke — its last words do not make it busy.
+pub fn derive_activity(alive: bool, since_last_output: Duration, window: Duration) -> Activity {
+    if !alive {
+        return Activity::Exited;
+    }
+    if since_last_output < window {
+        Activity::Working
+    } else {
+        Activity::Waiting
+    }
+}
+
+/// Confidence is only meaningful for `waiting`; the other states report `null`.
+pub fn derive_waiting_confidence(
+    activity: Activity,
+    patterns: &PromptPatterns,
+    tail: &[u8],
+) -> Option<WaitingConfidence> {
+    if activity != Activity::Waiting {
+        return None;
+    }
+    if patterns.matches(tail) {
+        Some(WaitingConfidence::High)
+    } else {
+        Some(WaitingConfidence::Low)
+    }
+}
+
+/// A definition's prompt regexes, compiled once.
+///
+/// Patterns are matched against the raw scrollback tail, escape sequences and
+/// all — a pattern anchored to end-of-input may therefore miss a prompt that is
+/// followed by a colour reset. Matching a distinctive literal (`"(y/n)"`,
+/// `"Do you want to"`) is the reliable approach.
+#[derive(Debug, Default)]
+pub struct PromptPatterns {
+    regexes: Vec<Regex>,
+}
+
+impl PromptPatterns {
+    /// Compiles every pattern, **skipping** the ones that do not compile.
+    ///
+    /// A typo in a user's regex must not take the session's activity signal
+    /// down with it, so an invalid pattern is logged once here and thereafter
+    /// simply never matches.
+    pub fn compile(patterns: &[String]) -> Self {
+        let mut regexes = Vec::with_capacity(patterns.len());
+        for pattern in patterns {
+            match Regex::new(pattern) {
+                Ok(re) => regexes.push(re),
+                Err(err) => {
+                    tracing::warn!(
+                        pattern = %pattern,
+                        error = %err,
+                        "ignoring invalid agent prompt pattern"
+                    );
+                }
+            }
+        }
+        Self { regexes }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.regexes.is_empty()
+    }
+
+    /// True when any pattern matches the tail. A definition with no (valid)
+    /// patterns never matches, which keeps its sessions at `low` confidence
+    /// rather than falsely promoting them.
+    pub fn matches(&self, tail: &[u8]) -> bool {
+        if self.regexes.is_empty() {
+            return false;
+        }
+        // Lossy is right here: the tail is a byte window that may start
+        // mid-codepoint, and a replacement char cannot create a false match on
+        // any pattern a user would sensibly write.
+        let text = String::from_utf8_lossy(tail);
+        self.regexes.iter().any(|re| re.is_match(&text))
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Session
 // ---------------------------------------------------------------------------
 
@@ -307,6 +459,10 @@ pub struct AgentSessionInfo {
     pub status: String,
     #[serde(rename = "exitCode")]
     pub exit_code: Option<i32>,
+    /// Inferred from output recency — see [`Activity`]. Not authoritative.
+    pub activity: String,
+    #[serde(rename = "waitingConfidence")]
+    pub waiting_confidence: Option<String>,
 }
 
 /// A live PTY plus everything needed to attach to it later.
@@ -337,6 +493,19 @@ pub struct AgentSession {
     pid: Option<u32>,
 
     status: Mutex<SessionStatus>,
+
+    /// When output was last seen, on the monotonic clock.
+    ///
+    /// `Instant`, never wall-clock: a DST change or an NTP step must not make a
+    /// busy session look idle for an hour, nor an idle one look busy. Seeded at
+    /// spawn so a session that has not printed anything yet is `working` for
+    /// its first window rather than reporting `waiting` before it has had a
+    /// chance to speak.
+    last_output: Arc<Mutex<Instant>>,
+
+    /// Compiled once when the session starts, shared with every other session
+    /// launched from the same pattern set.
+    prompt_patterns: Arc<PromptPatterns>,
 }
 
 impl AgentSession {
@@ -348,8 +517,45 @@ impl AgentSession {
         matches!(self.status(), SessionStatus::Running)
     }
 
+    /// Time since the last chunk of output (or since spawn, if there has been
+    /// none).
+    pub fn since_last_output(&self) -> Duration {
+        self.last_output.lock().expect("last_output mutex").elapsed()
+    }
+
+    /// The inferred [`Activity`] plus, when waiting, how much to trust it.
+    ///
+    /// The scrollback tail is only read when the session is otherwise
+    /// `waiting`, so the common `working` case costs one lock and no regex.
+    pub fn activity(&self) -> (Activity, Option<WaitingConfidence>) {
+        let activity = derive_activity(
+            self.is_running(),
+            self.since_last_output(),
+            ACTIVITY_WORKING_WINDOW,
+        );
+
+        if activity != Activity::Waiting {
+            return (activity, None);
+        }
+
+        // A definition with no patterns can only ever be `low`, so skip the
+        // scrollback lock entirely in that case.
+        let tail = if self.prompt_patterns.is_empty() {
+            Vec::new()
+        } else {
+            let sb = self.scrollback.lock().expect("scrollback mutex");
+            sb.tail(PROMPT_SCAN_BYTES)
+        };
+
+        (
+            activity,
+            derive_waiting_confidence(activity, &self.prompt_patterns, &tail),
+        )
+    }
+
     pub fn info(&self) -> AgentSessionInfo {
         let status = self.status();
+        let (activity, confidence) = self.activity();
         AgentSessionInfo {
             id: self.id.clone(),
             workspace_id: self.workspace_id.clone(),
@@ -360,6 +566,8 @@ impl AgentSession {
                 SessionStatus::Exited { code } => code,
                 SessionStatus::Running => None,
             },
+            activity: activity.as_str().to_string(),
+            waiting_confidence: confidence.map(|c| c.as_str().to_string()),
         }
     }
 
@@ -463,6 +671,10 @@ pub struct SpawnRequest {
     pub program: String,
     pub args: Vec<String>,
     pub env: Vec<(String, String)>,
+    /// Regexes that, when seen at the end of the scrollback, mean the agent is
+    /// asking the user something. Optional — an empty list just means every
+    /// `waiting` verdict reports `low` confidence.
+    pub prompt_patterns: Vec<String>,
     pub rows: u16,
     pub cols: u16,
 }
@@ -475,6 +687,14 @@ pub struct AgentRegistry {
     /// Serializes the capacity check with the insert. Without it, sixteen
     /// simultaneous requests could each observe fifteen live sessions.
     spawn_lock: Arc<tokio::sync::Mutex<()>>,
+    /// Compiled prompt regexes, keyed by the pattern list itself.
+    ///
+    /// Regex compilation is expensive and the activity signal is polled, so it
+    /// happens once per distinct pattern set at spawn time and never on the
+    /// poll path. Keying on the patterns rather than on a definition id means
+    /// editing a definition transparently produces a new entry instead of
+    /// serving a stale compilation.
+    pattern_cache: Arc<DashMap<Vec<String>, Arc<PromptPatterns>>>,
 }
 
 impl Default for AgentRegistry {
@@ -488,11 +708,23 @@ impl AgentRegistry {
         Self {
             sessions: Arc::new(DashMap::new()),
             spawn_lock: Arc::new(tokio::sync::Mutex::new(())),
+            pattern_cache: Arc::new(DashMap::new()),
         }
     }
 
     pub fn get(&self, id: &str) -> Option<Arc<AgentSession>> {
         self.sessions.get(id).map(|e| e.value().clone())
+    }
+
+    /// Returns the compiled form of `patterns`, compiling on first sight.
+    fn compiled_patterns(&self, patterns: &[String]) -> Arc<PromptPatterns> {
+        if let Some(hit) = self.pattern_cache.get(patterns) {
+            return hit.value().clone();
+        }
+        let compiled = Arc::new(PromptPatterns::compile(patterns));
+        self.pattern_cache
+            .insert(patterns.to_vec(), compiled.clone());
+        compiled
     }
 
     pub fn live_count(&self) -> usize {
@@ -623,6 +855,7 @@ impl AgentRegistry {
 
         let (output_tx, _) = broadcast::channel::<Arc<[u8]>>(OUTPUT_CHANNEL_CAPACITY);
         let scrollback = Arc::new(Mutex::new(ScrollbackBuffer::new(SCROLLBACK_CAPACITY)));
+        let last_output = Arc::new(Mutex::new(Instant::now()));
 
         let session = Arc::new(AgentSession {
             id: id.to_string(),
@@ -636,6 +869,8 @@ impl AgentRegistry {
             killer: Mutex::new(killer),
             pid,
             status: Mutex::new(SessionStatus::Running),
+            last_output: last_output.clone(),
+            prompt_patterns: self.compiled_patterns(&req.prompt_patterns),
         });
 
         // Thread 1 — blocking PTY reader. Ends at EOF, which happens once the
@@ -670,6 +905,11 @@ impl AgentRegistry {
                     sb.push(&chunk);
                     let _ = output_tx.send(chunk);
                 }
+
+                // The in-memory signal `activity` is derived from. Updated on
+                // every chunk (it is one monotonic clock read), unlike the
+                // throttled SQLite write below, which exists only for display.
+                *last_output.lock().expect("last_output mutex") = Instant::now();
 
                 let now = chrono::Utc::now().timestamp();
                 if now - last_touch >= ACTIVITY_TOUCH_INTERVAL_SECS {
@@ -899,11 +1139,221 @@ mod tests {
         }
     }
 
+    // -- activity heuristic ------------------------------------------------
+
+    fn ms(n: u64) -> Duration {
+        Duration::from_millis(n)
+    }
+
+    #[test]
+    fn recent_output_reads_as_working() {
+        assert_eq!(
+            derive_activity(true, ms(0), ACTIVITY_WORKING_WINDOW),
+            Activity::Working
+        );
+        assert_eq!(
+            derive_activity(true, ms(1499), ACTIVITY_WORKING_WINDOW),
+            Activity::Working
+        );
+    }
+
+    #[test]
+    fn silence_past_the_window_reads_as_waiting() {
+        // The boundary belongs to `waiting`: at exactly the window the session
+        // has been silent for the full period.
+        assert_eq!(
+            derive_activity(true, ms(1500), ACTIVITY_WORKING_WINDOW),
+            Activity::Waiting
+        );
+        assert_eq!(
+            derive_activity(true, ms(60_000), ACTIVITY_WORKING_WINDOW),
+            Activity::Waiting
+        );
+    }
+
+    #[test]
+    fn a_dead_process_is_exited_however_recently_it_spoke() {
+        // `exited` is the one authoritative state — it must never be masked by
+        // the output-recency guess.
+        assert_eq!(
+            derive_activity(false, ms(0), ACTIVITY_WORKING_WINDOW),
+            Activity::Exited
+        );
+        assert_eq!(
+            derive_activity(false, ms(999_999), ACTIVITY_WORKING_WINDOW),
+            Activity::Exited
+        );
+    }
+
+    #[test]
+    fn activity_strings_are_the_wire_values() {
+        assert_eq!(Activity::Working.as_str(), "working");
+        assert_eq!(Activity::Waiting.as_str(), "waiting");
+        assert_eq!(Activity::Exited.as_str(), "exited");
+        assert_eq!(WaitingConfidence::High.as_str(), "high");
+        assert_eq!(WaitingConfidence::Low.as_str(), "low");
+    }
+
+    // -- prompt patterns ---------------------------------------------------
+
+    fn patterns(list: &[&str]) -> PromptPatterns {
+        PromptPatterns::compile(&list.iter().map(|s| s.to_string()).collect::<Vec<_>>())
+    }
+
+    #[test]
+    fn a_prompt_in_the_tail_matches() {
+        let p = patterns(&[r"\(y/n\)", r"Do you want to"]);
+        assert!(p.matches(b"Do you want to create foo.rs? (y/n) "));
+        assert!(p.matches(b"...\nWrite the file? (y/n)"));
+    }
+
+    #[test]
+    fn ordinary_output_does_not_match() {
+        let p = patterns(&[r"\(y/n\)"]);
+        assert!(!p.matches(b"compiling backend v0.7.0\n"));
+        assert!(!p.matches(b""));
+    }
+
+    #[test]
+    fn a_definition_without_patterns_never_matches() {
+        let p = patterns(&[]);
+        assert!(p.is_empty());
+        assert!(!p.matches(b"Do you want to proceed? (y/n)"));
+    }
+
+    #[test]
+    fn an_invalid_pattern_is_skipped_not_panicked_on() {
+        // A user typo must cost that one pattern, nothing else.
+        let p = patterns(&["(unclosed", r"\(y/n\)", "*bad"]);
+        assert!(!p.is_empty());
+        assert!(p.matches(b"proceed? (y/n)"));
+        assert!(!p.matches(b"(unclosed"));
+    }
+
+    #[test]
+    fn only_invalid_patterns_leaves_an_empty_set() {
+        let p = patterns(&["(unclosed", "*bad"]);
+        assert!(p.is_empty());
+        assert!(!p.matches(b"anything at all"));
+    }
+
+    #[test]
+    fn a_tail_that_starts_mid_codepoint_does_not_panic() {
+        // `tail` slices bytes, so the window can begin inside a UTF-8
+        // sequence; matching must be lossy rather than fallible.
+        let mut bytes = vec![0x9f, 0x92, 0xa9]; // trailing bytes of an emoji
+        bytes.extend_from_slice(b" continue? (y/n)");
+        let p = patterns(&[r"\(y/n\)"]);
+        assert!(p.matches(&bytes));
+    }
+
+    // -- confidence --------------------------------------------------------
+
+    #[test]
+    fn a_matching_prompt_raises_waiting_confidence() {
+        let p = patterns(&[r"\(y/n\)"]);
+        assert_eq!(
+            derive_waiting_confidence(Activity::Waiting, &p, b"overwrite? (y/n)"),
+            Some(WaitingConfidence::High)
+        );
+    }
+
+    #[test]
+    fn silence_without_a_prompt_stays_low_confidence() {
+        // The honest case: a quiet build looks exactly like a quiet prompt.
+        let p = patterns(&[r"\(y/n\)"]);
+        assert_eq!(
+            derive_waiting_confidence(Activity::Waiting, &p, b"   Compiling serde v1.0"),
+            Some(WaitingConfidence::Low)
+        );
+    }
+
+    #[test]
+    fn confidence_is_absent_unless_waiting() {
+        let p = patterns(&[r"\(y/n\)"]);
+        // Even when the text matches — a working or dead session is not
+        // "waiting with high confidence".
+        assert_eq!(
+            derive_waiting_confidence(Activity::Working, &p, b"overwrite? (y/n)"),
+            None
+        );
+        assert_eq!(
+            derive_waiting_confidence(Activity::Exited, &p, b"overwrite? (y/n)"),
+            None
+        );
+    }
+
+    // -- scrollback tail ---------------------------------------------------
+
+    #[test]
+    fn tail_returns_the_newest_bytes_only() {
+        let mut sb = ScrollbackBuffer::new(64);
+        sb.push(b"0123456789");
+        assert_eq!(sb.tail(4), b"6789".to_vec());
+    }
+
+    #[test]
+    fn tail_larger_than_the_buffer_returns_everything() {
+        let mut sb = ScrollbackBuffer::new(64);
+        sb.push(b"hi");
+        assert_eq!(sb.tail(2048), b"hi".to_vec());
+        assert_eq!(ScrollbackBuffer::new(64).tail(2048), Vec::<u8>::new());
+    }
+
+    #[test]
+    fn tail_survives_a_wrapped_ring() {
+        // After eviction the VecDeque is in two slices; the tail must still
+        // read in order.
+        let mut sb = ScrollbackBuffer::new(8);
+        sb.push(b"0123456789");
+        assert_eq!(sb.tail(3), b"789".to_vec());
+    }
+
+    #[test]
+    fn a_prompt_is_found_in_a_realistic_scrollback_tail() {
+        let mut sb = ScrollbackBuffer::new(SCROLLBACK_CAPACITY);
+        for _ in 0..2000 {
+            sb.push(b"[tool] reading src/main.rs\n");
+        }
+        sb.push(b"\nDo you want to make this edit? (y/n) ");
+
+        let p = patterns(&[r"Do you want to"]);
+        assert!(p.matches(&sb.tail(PROMPT_SCAN_BYTES)));
+    }
+
+    #[test]
+    fn an_old_prompt_scrolled_out_of_the_window_no_longer_matches() {
+        // Otherwise an answered question would pin the session to `high`
+        // confidence for the rest of its life.
+        let mut sb = ScrollbackBuffer::new(SCROLLBACK_CAPACITY);
+        sb.push(b"Do you want to make this edit? (y/n) y\n");
+        for _ in 0..500 {
+            sb.push(b"[tool] writing a line of output.......\n");
+        }
+
+        let p = patterns(&[r"Do you want to"]);
+        assert!(!p.matches(&sb.tail(PROMPT_SCAN_BYTES)));
+        // Still present further back — it is the window that excludes it.
+        assert!(p.matches(&sb.snapshot()));
+    }
+
     #[test]
     fn empty_registry_has_no_live_sessions() {
         let reg = AgentRegistry::new();
         assert_eq!(reg.live_count(), 0);
         assert!(reg.list(None).is_empty());
         assert!(reg.get("nope").is_none());
+    }
+
+    #[test]
+    fn identical_pattern_sets_share_one_compilation() {
+        let reg = AgentRegistry::new();
+        let list = vec![r"\(y/n\)".to_string()];
+        let first = reg.compiled_patterns(&list);
+        let second = reg.compiled_patterns(&list.clone());
+        assert!(Arc::ptr_eq(&first, &second));
+
+        let other = reg.compiled_patterns(&[r"continue\?".to_string()]);
+        assert!(!Arc::ptr_eq(&first, &other));
     }
 }

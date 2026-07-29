@@ -48,6 +48,9 @@ notify = "6"
 ignore = "0.4"
 
 portable-pty = "0.8"
+# Agent prompt detection: a definition may carry regexes that mean "this agent
+# is asking the user something". Compiled once per pattern set, never per poll.
+regex = "1"
 urlencoding = "2"
 http = "1"
 rust-embed = "8"

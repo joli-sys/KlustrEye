@@ -12,6 +12,16 @@ pub async fn init_pool(database_url: &str) -> anyhow::Result<SqlitePool> {
     Ok(pool)
 }
 
+/// Decides whether a guarded `ALTER TABLE ... ADD COLUMN` still needs to run,
+/// given the names reported by `PRAGMA table_info`.
+///
+/// Comparison is case-insensitive because SQLite treats identifiers that way:
+/// a table declared with `PromptPatterns` already has the column, and adding it
+/// again would fail with "duplicate column name".
+pub(crate) fn column_missing(existing: &[String], column: &str) -> bool {
+    !existing.iter().any(|c| c.eq_ignore_ascii_case(column))
+}
+
 pub(crate) async fn run_migrations(pool: &SqlitePool) -> anyhow::Result<()> {
     sqlx::query(
         "CREATE TABLE IF NOT EXISTS organizations (
@@ -185,6 +195,7 @@ pub(crate) async fn run_migrations(pool: &SqlitePool) -> anyhow::Result<()> {
             command TEXT NOT NULL,
             args TEXT NOT NULL DEFAULT '[]',
             env TEXT NOT NULL DEFAULT '{}',
+            prompt_patterns TEXT NOT NULL DEFAULT '[]',
             sort_order INTEGER NOT NULL DEFAULT 0,
             built_in INTEGER NOT NULL DEFAULT 0,
             created_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -193,6 +204,25 @@ pub(crate) async fn run_migrations(pool: &SqlitePool) -> anyhow::Result<()> {
     )
     .execute(pool)
     .await?;
+
+    // `prompt_patterns` was added after `agent_definitions` shipped, and the
+    // `CREATE TABLE IF NOT EXISTS` above is a no-op on a database that already
+    // has the table — it will NOT add the column. Hence a hand-written
+    // `ALTER TABLE`, guarded by the table's actual column list so a second
+    // startup does not fail with "duplicate column name".
+    let columns: Vec<String> =
+        sqlx::query_scalar("SELECT name FROM pragma_table_info('agent_definitions')")
+            .fetch_all(pool)
+            .await?;
+
+    if column_missing(&columns, "prompt_patterns") {
+        sqlx::query(
+            "ALTER TABLE agent_definitions
+             ADD COLUMN prompt_patterns TEXT NOT NULL DEFAULT '[]'",
+        )
+        .execute(pool)
+        .await?;
+    }
 
     // Seed the three built-in agent definitions exactly once, on FIXED ids, so
     // `routes/agents.rs` can key deletes/updates on them predictably. Gated by
@@ -260,4 +290,41 @@ pub(crate) async fn run_migrations(pool: &SqlitePool) -> anyhow::Result<()> {
     .await?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::column_missing;
+
+    /// The shape a database created before `prompt_patterns` existed reports.
+    fn legacy_columns() -> Vec<String> {
+        ["id", "name", "command", "args", "env", "sort_order", "built_in"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect()
+    }
+
+    #[test]
+    fn alter_runs_on_a_table_that_predates_the_column() {
+        assert!(column_missing(&legacy_columns(), "prompt_patterns"));
+    }
+
+    #[test]
+    fn alter_is_skipped_once_the_column_exists() {
+        let mut cols = legacy_columns();
+        cols.push("prompt_patterns".to_string());
+        assert!(!column_missing(&cols, "prompt_patterns"));
+    }
+
+    #[test]
+    fn column_match_is_case_insensitive_like_sqlite() {
+        let cols = vec!["PROMPT_PATTERNS".to_string()];
+        assert!(!column_missing(&cols, "prompt_patterns"));
+    }
+
+    #[test]
+    fn a_prefix_of_the_column_name_does_not_count_as_present() {
+        let cols = vec!["prompt".to_string(), "patterns".to_string()];
+        assert!(column_missing(&cols, "prompt_patterns"));
+    }
 }

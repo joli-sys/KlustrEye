@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use uuid::Uuid;
 
 use crate::{
-    agents::SpawnRequest,
+    agents::{Activity, SpawnRequest},
     error::{AppError, Result},
     AppState,
 };
@@ -62,6 +62,36 @@ pub fn validate_env(env: Option<&Value>) -> std::result::Result<HashMap<String, 
     }
 }
 
+/// Parses the wire representation of `promptPatterns` — regexes that mean "the
+/// agent is asking the user something".
+///
+/// Each pattern is compiled here purely to reject a typo at the boundary with a
+/// 400 rather than storing something that can never match. The runtime side
+/// ([`crate::agents::PromptPatterns`]) still tolerates an invalid pattern by
+/// skipping it, because a row can predate this validation.
+pub fn validate_prompt_patterns(
+    patterns: Option<&Value>,
+) -> std::result::Result<Vec<String>, String> {
+    let list: Vec<String> = match patterns {
+        None | Some(Value::Null) => return Ok(Vec::new()),
+        Some(Value::Array(items)) => items
+            .iter()
+            .map(|item| {
+                item.as_str()
+                    .map(str::to_string)
+                    .ok_or_else(|| "promptPatterns must be an array of strings".to_string())
+            })
+            .collect::<std::result::Result<_, _>>()?,
+        Some(_) => return Err("promptPatterns must be an array of strings".to_string()),
+    };
+
+    for pattern in &list {
+        regex::Regex::new(pattern)
+            .map_err(|e| format!("invalid prompt pattern '{pattern}': {e}"))?;
+    }
+    Ok(list)
+}
+
 #[derive(Deserialize)]
 pub struct AgentDefinitionBody {
     pub name: String,
@@ -70,6 +100,8 @@ pub struct AgentDefinitionBody {
     pub args: Option<Value>,
     #[serde(default)]
     pub env: Option<Value>,
+    #[serde(default, rename = "promptPatterns")]
+    pub prompt_patterns: Option<Value>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -79,14 +111,15 @@ struct AgentDefinitionRow {
     command: String,
     args: String,
     env: String,
+    prompt_patterns: String,
     sort_order: i64,
     built_in: i64,
     created_at: String,
     updated_at: String,
 }
 
-const SELECT_COLS: &str =
-    "id, name, command, args, env, sort_order, built_in, created_at, updated_at";
+const SELECT_COLS: &str = "id, name, command, args, env, prompt_patterns, sort_order, \
+                           built_in, created_at, updated_at";
 
 /// `args`/`env` are stored as validated JSON TEXT (see `validate_args` /
 /// `validate_env`), so a parse failure here would mean the stored value was
@@ -94,6 +127,8 @@ const SELECT_COLS: &str =
 fn row_to_json(row: &AgentDefinitionRow) -> Value {
     let args: Value = serde_json::from_str(&row.args).unwrap_or_else(|_| json!([]));
     let env: Value = serde_json::from_str(&row.env).unwrap_or_else(|_| json!({}));
+    let prompt_patterns: Value =
+        serde_json::from_str(&row.prompt_patterns).unwrap_or_else(|_| json!([]));
 
     json!({
         "id": row.id,
@@ -101,6 +136,7 @@ fn row_to_json(row: &AgentDefinitionRow) -> Value {
         "command": row.command,
         "args": args,
         "env": env,
+        "promptPatterns": prompt_patterns,
         "sortOrder": row.sort_order,
         "builtIn": row.built_in != 0,
         "createdAt": row.created_at,
@@ -134,16 +170,20 @@ pub async fn create_agent_definition(
     validate_command(&body.command).map_err(AppError::BadRequest)?;
     let args = validate_args(body.args.as_ref()).map_err(AppError::BadRequest)?;
     let env = validate_env(body.env.as_ref()).map_err(AppError::BadRequest)?;
+    let prompt_patterns =
+        validate_prompt_patterns(body.prompt_patterns.as_ref()).map_err(AppError::BadRequest)?;
 
     let id = Uuid::new_v4().to_string();
     sqlx::query(
-        "INSERT INTO agent_definitions (id, name, command, args, env) VALUES (?, ?, ?, ?, ?)",
+        "INSERT INTO agent_definitions (id, name, command, args, env, prompt_patterns)
+         VALUES (?, ?, ?, ?, ?, ?)",
     )
     .bind(&id)
     .bind(body.name.trim())
     .bind(body.command.trim())
     .bind(serde_json::to_string(&args)?)
     .bind(serde_json::to_string(&env)?)
+    .bind(serde_json::to_string(&prompt_patterns)?)
     .execute(&state.db)
     .await?;
 
@@ -160,16 +200,20 @@ pub async fn update_agent_definition(
     validate_command(&body.command).map_err(AppError::BadRequest)?;
     let args = validate_args(body.args.as_ref()).map_err(AppError::BadRequest)?;
     let env = validate_env(body.env.as_ref()).map_err(AppError::BadRequest)?;
+    let prompt_patterns =
+        validate_prompt_patterns(body.prompt_patterns.as_ref()).map_err(AppError::BadRequest)?;
 
     let res = sqlx::query(
         "UPDATE agent_definitions
-         SET name = ?, command = ?, args = ?, env = ?, updated_at = datetime('now')
+         SET name = ?, command = ?, args = ?, env = ?, prompt_patterns = ?,
+             updated_at = datetime('now')
          WHERE id = ?",
     )
     .bind(body.name.trim())
     .bind(body.command.trim())
     .bind(serde_json::to_string(&args)?)
     .bind(serde_json::to_string(&env)?)
+    .bind(serde_json::to_string(&prompt_patterns)?)
     .bind(&id)
     .execute(&state.db)
     .await?;
@@ -240,13 +284,29 @@ const SESSION_COLS: &str = "id, workspace_id, definition_id, title, status, exit
 /// The table is the durable record, but a session that has just exited may not
 /// have had its row updated yet — the registry writes it from a task. When the
 /// registry still holds the session, its in-memory status is the fresher truth.
+///
+/// `activity` can only be answered by the registry, because it is derived from
+/// an in-memory monotonic timestamp. A row with no live session therefore
+/// reports `exited` — after a server restart the PTY is gone for good, and
+/// reporting a dead session as `waiting` forever would be a lie the UI would
+/// draw an icon for.
 fn session_to_json(row: &AgentSessionRow, state: &AppState) -> Value {
-    let (status, exit_code) = match state.agents.get(&row.id) {
+    let (status, exit_code, activity, waiting_confidence) = match state.agents.get(&row.id) {
         Some(session) => {
             let info = session.info();
-            (info.status, info.exit_code.map(i64::from))
+            (
+                info.status,
+                info.exit_code.map(i64::from),
+                info.activity,
+                info.waiting_confidence,
+            )
         }
-        None => (row.status.clone(), row.exit_code),
+        None => (
+            row.status.clone(),
+            row.exit_code,
+            Activity::Exited.as_str().to_string(),
+            None,
+        ),
     };
 
     json!({
@@ -256,6 +316,8 @@ fn session_to_json(row: &AgentSessionRow, state: &AppState) -> Value {
         "title": row.title,
         "status": status,
         "exitCode": exit_code,
+        "activity": activity,
+        "waitingConfidence": waiting_confidence,
         "createdAt": row.created_at,
         "lastActivityAt": row.last_activity_at,
         "exitedAt": row.exited_at,
@@ -312,6 +374,12 @@ pub async fn create_agent_session(
     let mut env: Vec<(String, String)> = env_map.into_iter().collect();
     env.sort();
 
+    // Stored patterns are validated on write, but a row could predate that or
+    // have been edited outside the API — an unparseable list means "no
+    // patterns", i.e. lower confidence, never a failed spawn.
+    let prompt_patterns: Vec<String> =
+        serde_json::from_str(&definition.prompt_patterns).unwrap_or_default();
+
     let title = body
         .title
         .as_deref()
@@ -334,6 +402,7 @@ pub async fn create_agent_session(
                 program: definition.command,
                 args,
                 env,
+                prompt_patterns,
                 rows: body.rows.unwrap_or(24),
                 cols: body.cols.unwrap_or(80),
             },
@@ -438,6 +507,28 @@ mod tests {
         assert_eq!(validate_env(Some(&json!({"FOO": "bar"}))), Ok(expected));
         assert!(validate_env(Some(&json!({"FOO": 1}))).is_err());
         assert!(validate_env(Some(&json!(["FOO=bar"]))).is_err());
+    }
+
+    #[test]
+    fn prompt_patterns_absent_or_null_means_empty() {
+        assert_eq!(validate_prompt_patterns(None), Ok(Vec::new()));
+        assert_eq!(validate_prompt_patterns(Some(&Value::Null)), Ok(Vec::new()));
+    }
+
+    #[test]
+    fn prompt_patterns_must_be_an_array_of_strings() {
+        assert_eq!(
+            validate_prompt_patterns(Some(&json!([r"\(y/n\)"]))),
+            Ok(vec![r"\(y/n\)".to_string()])
+        );
+        assert!(validate_prompt_patterns(Some(&json!([1]))).is_err());
+        assert!(validate_prompt_patterns(Some(&json!("(y/n)"))).is_err());
+    }
+
+    #[test]
+    fn an_uncompilable_prompt_pattern_is_rejected_at_the_boundary() {
+        let err = validate_prompt_patterns(Some(&json!(["(unclosed"]))).unwrap_err();
+        assert!(err.contains("invalid prompt pattern"));
     }
 
     #[test]
