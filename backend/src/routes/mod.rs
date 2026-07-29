@@ -21,7 +21,12 @@ use axum::{
 };
 
 use crate::{
-    ws::{shell::handle_shell, terminal::handle_terminal, watch::handle_watch},
+    ws::{
+        agent::{ensure_session_exists, handle_agent},
+        shell::handle_shell,
+        terminal::handle_terminal,
+        watch::handle_watch,
+    },
     AppState,
 };
 
@@ -124,6 +129,11 @@ pub fn build_router(state: AppState) -> Router {
             put(agents::update_agent_definition)
             .delete(agents::delete_agent_definition)
         )
+        // Agent sessions (live PTYs, outliving the socket that started them)
+        .route("/api/workspaces/:ws_id/agent-sessions",
+            get(agents::list_agent_sessions).post(agents::create_agent_session))
+        .route("/api/agent-sessions/:id",
+            delete(agents::delete_agent_session))
         // Settings
         .route("/api/settings/kubeconfig",
             get(settings::get_kubeconfig).put(settings::set_kubeconfig))
@@ -136,6 +146,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/ws/terminal/:ctx/:namespace/:pod/:container", get(ws_terminal_handler))
         .route("/ws/shell/:ctx", get(ws_shell_handler))
         .route("/ws/watch/:ws_id", get(ws_watch_handler))
+        .route("/ws/agent/:session_id", get(ws_agent_handler))
         .with_state(state)
 }
 
@@ -171,6 +182,27 @@ async fn ws_shell_handler(
     ws.on_upgrade(move |socket| async move {
         handle_shell(socket, state.db.clone(), context_name).await
     })
+}
+
+/// Attaches to a live agent PTY. Detaching never kills it — see `ws/agent.rs`.
+async fn ws_agent_handler(
+    ws: WebSocketUpgrade,
+    Path(session_id): Path<String>,
+    State(state): State<AppState>,
+) -> impl IntoResponse {
+    let session_id = urlencoding::decode(&session_id).unwrap_or_default().to_string();
+
+    // Reject an unknown id with a real 404 before upgrading; afterwards the
+    // only channel left is a close frame the browser reports as a generic
+    // failure.
+    if let Err(e) = ensure_session_exists(&state, &session_id).await {
+        return e.into_response();
+    }
+
+    ws.on_upgrade(move |socket| async move {
+        handle_agent(socket, state.agents.clone(), session_id).await
+    })
+    .into_response()
 }
 
 async fn ws_watch_handler(
