@@ -5,6 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { KlustrEyeLogo } from "@/components/klustreye-logo";
 import { useWorkspaceId } from "@/hooks/use-cluster-path";
 import { useWorkspace } from "@/hooks/use-workspaces";
+import { orderedClusters } from "@/lib/workspace-clusters";
 import { clusterPath } from "@/lib/paths";
 
 /**
@@ -23,6 +24,9 @@ export function WorkspaceHome() {
   const { data: workspace } = useWorkspace(wsId);
 
   if (!workspace) return null;
+
+  const bound = orderedClusters(workspace.clusters);
+  const reachable = bound.filter((c) => c.exists);
 
   return (
     <div className="h-full overflow-auto">
@@ -47,12 +51,21 @@ export function WorkspaceHome() {
               <span className="truncate max-w-80">{workspace.folderPath}</span>
             </Badge>
           )}
-          {workspace.contextName && (
-            <Badge variant={workspace.contextExists ? "secondary" : "warning"}>
+          {bound.map((cluster) => (
+            <Badge
+              key={cluster.contextName}
+              variant={cluster.exists ? "secondary" : "warning"}
+              title={
+                cluster.exists
+                  ? undefined
+                  : "Not in the current kubeconfig — rebind this workspace to fix it."
+              }
+            >
               <Server className="h-3 w-3 mr-1" />
-              {workspace.contextName}
+              {cluster.contextName}
+              {!cluster.exists && <span className="ml-1 opacity-80">(missing)</span>}
             </Badge>
-          )}
+          ))}
         </div>
 
         <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -85,14 +98,22 @@ export function WorkspaceHome() {
           </Card>
         </div>
 
-        {workspace.contextName && (
-          <Link
-            to={clusterPath(workspace.id, workspace.contextName, "overview")}
-            className="mt-6 inline-flex items-center gap-2 text-sm text-primary hover:underline"
-          >
-            <Server className="h-3.5 w-3.5" />
-            Open {workspace.contextName}
-          </Link>
+        {/* One link per REACHABLE cluster. A missing one gets a badge above and
+            nothing to click: the link would only lead to a page whose every
+            request fails. */}
+        {reachable.length > 0 && (
+          <div className="mt-6 flex flex-wrap gap-x-6 gap-y-2">
+            {reachable.map((cluster) => (
+              <Link
+                key={cluster.contextName}
+                to={clusterPath(workspace.id, cluster.contextName, "overview")}
+                className="inline-flex items-center gap-2 text-sm text-primary hover:underline"
+              >
+                <Server className="h-3.5 w-3.5" />
+                Open {cluster.contextName}
+              </Link>
+            ))}
+          </div>
         )}
       </div>
     </div>

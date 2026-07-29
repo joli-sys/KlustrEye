@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { workspacePath, clusterPath, rewriteClusterHref } from "./paths";
+import {
+  workspacePath,
+  clusterPath,
+  clusterSwitchHref,
+  rewriteClusterHref,
+} from "./paths";
 
 describe("workspacePath", () => {
   it("builds a workspace root", () => {
@@ -70,5 +75,49 @@ describe("rewriteClusterHref", () => {
   });
   it("leaves unrelated hrefs untouched", () => {
     expect(rewriteClusterHref("ws1", "/settings")).toBe("/settings");
+  });
+});
+
+describe("clusterSwitchHref", () => {
+  it("carries the sub-path onto the other cluster", () => {
+    expect(
+      clusterSwitchHref("ws1", "prod", "stage", "/w/ws1/clusters/prod/workloads/pods")
+    ).toBe("/w/ws1/clusters/stage/workloads/pods");
+  });
+  it("stays in the SAME workspace — only the context segment moves", () => {
+    const href = clusterSwitchHref("ws1", "prod", "stage", "/w/ws1/clusters/prod/nodes");
+    expect(href.startsWith("/w/ws1/")).toBe(true);
+  });
+  it("appends the search string", () => {
+    expect(
+      clusterSwitchHref(
+        "ws1",
+        "prod",
+        "stage",
+        "/w/ws1/clusters/prod/workloads/pods",
+        "?filter=api"
+      )
+    ).toBe("/w/ws1/clusters/stage/workloads/pods?filter=api");
+  });
+  it("lands on the target cluster root from a path outside the source cluster", () => {
+    // Workspace home and `files/*` have no cluster sub-path to carry.
+    expect(clusterSwitchHref("ws1", "prod", "stage", "/w/ws1/files/a.yaml")).toBe(
+      "/w/ws1/clusters/stage"
+    );
+  });
+  it("lands on the target cluster root when already at the source root", () => {
+    expect(clusterSwitchHref("ws1", "prod", "stage", "/w/ws1/clusters/prod")).toBe(
+      "/w/ws1/clusters/stage"
+    );
+  });
+  it("matches the prefix in its ENCODED form, as the router reports it", () => {
+    // `location.pathname` is percent-encoded, so the prefix built by
+    // `clusterPath` compares directly against it — no decode step in between.
+    expect(clusterSwitchHref("ws1", "a b", "c d", "/w/ws1/clusters/a%20b/nodes")).toBe(
+      "/w/ws1/clusters/c%20d/nodes"
+    );
+  });
+  it("refuses the reserved workspace id", () => {
+    expect(() => clusterSwitchHref("clusters", "prod", "stage", "/x")).toThrow();
   });
 });

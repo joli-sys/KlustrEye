@@ -1,4 +1,5 @@
 import { Workspace } from "@/hooks/use-workspaces";
+import { missingClusters, workspaceHasNoBindings } from "@/lib/workspace-clusters";
 import { Button } from "@/components/ui/button";
 import { AlertCircle } from "lucide-react";
 
@@ -10,15 +11,23 @@ interface Props {
 
 export function WorkspaceBindingBanner({ workspace, mode, onRebind }: Props) {
   const folderBroken = !!workspace.folderPath && !workspace.folderExists;
-  const contextBroken = !!workspace.contextName && !workspace.contextExists;
-  const nothingBound = !workspace.folderPath && !workspace.contextName;
+  // Which bindings are gone, not merely that some are: with several clusters
+  // bound, "a cluster is missing" leaves the user guessing which one to fix.
+  const missing = missingClusters(workspace.clusters);
+  const nothingBound = workspaceHasNoBindings(workspace);
 
   const messages: string[] = [];
   if (folderBroken) messages.push(`Folder not found: ${workspace.folderPath}`);
-  if (contextBroken)
+  if (missing.length === 1) {
     messages.push(
-      `Cluster context "${workspace.contextName}" is not in the current kubeconfig.`
+      `Cluster context "${missing[0].contextName}" is not in the current kubeconfig.`
     );
+  } else if (missing.length > 1) {
+    messages.push(
+      `${missing.length} cluster contexts are not in the current kubeconfig: ` +
+        `${missing.map((c) => c.contextName).join(", ")}.`
+    );
+  }
   if (nothingBound) messages.push("This workspace has no folder and no cluster bound.");
 
   if (mode === "banner") {

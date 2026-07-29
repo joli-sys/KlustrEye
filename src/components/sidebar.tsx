@@ -4,6 +4,7 @@ import { useUIStore, type ActivityView } from "@/lib/stores/ui-store";
 import { clusterPath } from "@/lib/paths";
 import { useWorkspaceId } from "@/hooks/use-cluster-path";
 import type { Workspace } from "@/hooks/use-workspaces";
+import { activeClusterName } from "@/lib/workspace-clusters";
 import { ActivityBar, availableViews } from "@/components/activity-bar";
 import { SidebarExplorer } from "@/components/sidebar-explorer";
 import { SidebarSearch } from "@/components/sidebar-search";
@@ -14,10 +15,12 @@ import { Button } from "@/components/ui/button";
 /**
  * VS Code-style side panel: an always-visible icon rail plus exactly one view.
  *
- * `contextName` is optional: a folder-only workspace is a supported binding,
- * and the sidebar is mounted by WorkspaceLayout on routes that have no
- * `:contextName` param at all. Everything cluster-scoped lives behind the
- * Cluster rail icon, which simply is not there without a cluster.
+ * `contextName` is optional and is the ROUTE's cluster: a folder-only
+ * workspace is a supported binding, and the sidebar is mounted by
+ * WorkspaceLayout on routes that have no `:contextName` param at all, where
+ * the workspace's first bound cluster stands in. Everything cluster-scoped
+ * lives behind the Cluster rail icon, which simply is not there until the
+ * workspace binds at least one cluster.
  *
  * Collapsing hides the PANEL, never the rail — the rail is how it reopens.
  */
@@ -25,13 +28,15 @@ export function Sidebar({ workspace, contextName, onNavigate, forceExpanded }: {
   const { sidebarOpen: _sidebarOpen, setSidebarOpen, activityView, setActivityView } = useUIStore();
   const panelOpen = forceExpanded ?? _sidebarOpen;
   const wsId = useWorkspaceId();
-  const effectiveContext = contextName ?? workspace.contextName ?? undefined;
+  // Route first, first binding second — see activeClusterName.
+  const effectiveContext = activeClusterName(workspace.clusters, contextName);
   const basePath = effectiveContext ? clusterPath(wsId, effectiveContext, "") : null;
 
   const views = availableViews({
     hasFolder: !!workspace.folderPath,
-    // Cluster nav needs a bound context, same gate the old sidebar used.
-    hasCluster: !!workspace.contextName && !!basePath,
+    // One binding is enough for the Cluster rail icon; which one is active is
+    // the view's own business, and a broken one still deserves to be listed.
+    hasCluster: workspace.clusters.length > 0 && !!basePath,
   });
 
   /**
@@ -99,6 +104,7 @@ export function Sidebar({ workspace, contextName, onNavigate, forceExpanded }: {
             )}
             {activeView === "cluster" && basePath && effectiveContext && (
               <SidebarCluster
+                workspace={workspace}
                 contextName={effectiveContext}
                 basePath={basePath}
                 onNavigate={onNavigate}

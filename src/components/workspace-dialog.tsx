@@ -16,7 +16,8 @@ import {
   useUpdateWorkspace,
   type Workspace,
 } from "@/hooks/use-workspaces";
-import { FolderOpen } from "lucide-react";
+import { orderedClusters } from "@/lib/workspace-clusters";
+import { FolderOpen, ChevronUp, ChevronDown, X, AlertCircle } from "lucide-react";
 
 interface WorkspaceDialogProps {
   workspace?: Workspace | null;
@@ -41,7 +42,14 @@ export function WorkspaceDialog({ workspace, open, onOpenChange }: WorkspaceDial
   const isEdit = !!workspace;
   const [name, setName] = useState("");
   const [folderPath, setFolderPath] = useState("");
-  const [contextName, setContextName] = useState("");
+  /**
+   * Ordered — the index becomes each binding's `sortOrder`, and the first entry
+   * is the cluster the workspace opens on. Held as plain context names rather
+   * than as kubeconfig entries so a bound-but-missing context SURVIVES a save:
+   * building the list from `useClusters()` would quietly drop it the moment
+   * the user edited anything else.
+   */
+  const [contextNames, setContextNames] = useState<string[]>([]);
   const { data: clusters } = useClusters();
   const { addToast } = useToast();
   const createWorkspace = useCreateWorkspace();
@@ -52,7 +60,7 @@ export function WorkspaceDialog({ workspace, open, onOpenChange }: WorkspaceDial
     if (open) {
       setName(workspace?.name ?? "");
       setFolderPath(workspace?.folderPath ?? "");
-      setContextName(workspace?.contextName ?? "");
+      setContextNames(orderedClusters(workspace?.clusters).map((c) => c.contextName));
     }
   }, [open, workspace]);
 
@@ -69,7 +77,7 @@ export function WorkspaceDialog({ workspace, open, onOpenChange }: WorkspaceDial
     const input = {
       name: trimmedName,
       folderPath: folderPath.trim() || null,
-      contextName: contextName || null,
+      contextNames,
     };
 
     const onError = (err: unknown) => {
@@ -96,10 +104,41 @@ export function WorkspaceDialog({ workspace, open, onOpenChange }: WorkspaceDial
     }
   }
 
-  const clusterOptions = [
-    { value: "", label: "None" },
-    ...(clusters?.map((c) => ({ value: c.name, label: c.displayName || c.name })) ?? []),
+  const clusterLabel = (contextName: string) =>
+    clusters?.find((c) => c.name === contextName)?.displayName || contextName;
+
+  const isMissing = (contextName: string) =>
+    !!clusters && !clusters.some((c) => c.name === contextName);
+
+  const unselected = (clusters ?? []).filter((c) => !contextNames.includes(c.name));
+
+  const addOptions = [
+    {
+      value: "",
+      label: unselected.length ? "Add a cluster…" : "No other clusters in the kubeconfig",
+    },
+    ...unselected.map((c) => ({ value: c.name, label: c.displayName || c.name })),
   ];
+
+  function addCluster(contextName: string) {
+    if (!contextName) return;
+    setContextNames((prev) => (prev.includes(contextName) ? prev : [...prev, contextName]));
+  }
+
+  function removeCluster(index: number) {
+    setContextNames((prev) => prev.filter((_, i) => i !== index));
+  }
+
+  /** Swap with the neighbour; the ends simply have nowhere to go. */
+  function moveCluster(index: number, delta: number) {
+    setContextNames((prev) => {
+      const target = index + delta;
+      if (target < 0 || target >= prev.length) return prev;
+      const next = [...prev];
+      [next[index], next[target]] = [next[target], next[index]];
+      return next;
+    });
+  }
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -138,12 +177,69 @@ export function WorkspaceDialog({ workspace, open, onOpenChange }: WorkspaceDial
               )}
             </div>
             <div className="space-y-2">
-              <label className="text-sm text-muted-foreground">Cluster</label>
+              <label className="text-sm text-muted-foreground">Clusters</label>
+              {contextNames.length === 0 ? (
+                <p className="text-xs text-muted-foreground">
+                  No clusters bound. A workspace can hold any number, or none.
+                </p>
+              ) : (
+                <ul className="rounded-md border divide-y">
+                  {contextNames.map((ctx, index) => (
+                    <li key={ctx} className="flex items-center gap-2 px-2 py-1.5">
+                      <span className="w-5 shrink-0 text-xs text-muted-foreground tabular-nums">
+                        {index + 1}.
+                      </span>
+                      <span className="flex-1 min-w-0 truncate text-sm">
+                        {clusterLabel(ctx)}
+                      </span>
+                      {isMissing(ctx) && (
+                        <span
+                          className="flex items-center gap-1 shrink-0 text-[10px] uppercase text-yellow-600"
+                          title="Not in the current kubeconfig. Kept so saving does not silently unbind it."
+                        >
+                          <AlertCircle className="h-3 w-3" />
+                          missing
+                        </span>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => moveCluster(index, -1)}
+                        disabled={index === 0}
+                        title="Move up"
+                        className="p-1 rounded hover:bg-accent disabled:opacity-30 disabled:hover:bg-transparent"
+                      >
+                        <ChevronUp className="h-3.5 w-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => moveCluster(index, 1)}
+                        disabled={index === contextNames.length - 1}
+                        title="Move down"
+                        className="p-1 rounded hover:bg-accent disabled:opacity-30 disabled:hover:bg-transparent"
+                      >
+                        <ChevronDown className="h-3.5 w-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => removeCluster(index)}
+                        title="Remove"
+                        className="p-1 rounded hover:bg-accent"
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
               <Select
-                value={contextName}
-                onChange={(e) => setContextName(e.target.value)}
-                options={clusterOptions}
+                value=""
+                disabled={unselected.length === 0}
+                onChange={(e) => addCluster(e.target.value)}
+                options={addOptions}
               />
+              <p className="text-xs text-muted-foreground">
+                The first cluster is the one the workspace opens on.
+              </p>
             </div>
           </div>
           <DialogFooter>

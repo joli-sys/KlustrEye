@@ -1,6 +1,13 @@
 import { useEffect, useState } from "react";
-import { Outlet, useParams, Navigate } from "react-router-dom";
+import { Outlet, useParams, useMatch, Navigate } from "react-router-dom";
 import { useWorkspace } from "@/hooks/use-workspaces";
+import {
+  activeClusterName,
+  allClustersMissing,
+  missingClusters,
+  orderedClusters,
+  workspaceHasNoBindings,
+} from "@/lib/workspace-clusters";
 import { useFileWatch } from "@/hooks/use-file-watch";
 import { useTabStore } from "@/lib/stores/tab-store";
 import { hasDirtyModels, releaseAllClean } from "@/lib/editor/model-registry";
@@ -18,11 +25,25 @@ export function WorkspaceLayout() {
   const adoptLegacyTabs = useTabStore((s) => s.adoptLegacyTabs);
   const [editing, setEditing] = useState(false);
 
+  /**
+   * `:contextName` belongs to the CHILD route, and `useParams` in a parent
+   * only sees params matched down to itself — hence the explicit match. This
+   * is the one authority on which cluster is on screen; the workspace's
+   * binding list only supplies a default for routes outside a cluster.
+   */
+  const clusterMatch = useMatch("/w/:wsId/clusters/:contextName/*");
+  const routeContext = clusterMatch?.params.contextName;
+
+  // Re-running on a refetch is harmless: a second pass finds the legacy
+  // bucket already drained and leaves the store untouched. v0 parked tabs per
+  // CLUSTER, so every binding is a candidate.
+  const bound = orderedClusters(workspace?.clusters);
   useEffect(() => {
-    if (workspace?.contextName && wsId) {
-      adoptLegacyTabs(wsId, workspace.contextName);
-    }
-  }, [wsId, workspace?.contextName, adoptLegacyTabs]);
+    if (!wsId) return;
+    for (const cluster of bound) adoptLegacyTabs(wsId, cluster.contextName);
+    // `bound` is rebuilt each render; `workspace` is the value that changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wsId, workspace, adoptLegacyTabs]);
 
   // One socket per workspace, and only where there is a folder to watch — a
   // broken binding would just reconnect against a folder that is not there.
@@ -71,9 +92,11 @@ export function WorkspaceLayout() {
   if (isError || !workspace) return <Navigate to="/" replace />;
 
   const folderBroken = !!workspace.folderPath && !workspace.folderExists;
-  const contextBroken = !!workspace.contextName && !workspace.contextExists;
-  const bothBroken = folderBroken && contextBroken;
-  const nothingBound = !workspace.folderPath && !workspace.contextName;
+  // A workspace with two clusters, one of them gone, still has a working
+  // cluster surface — only losing EVERY binding earns the repair screen.
+  const someClustersMissing = missingClusters(workspace.clusters).length > 0;
+  const bothBroken = folderBroken && allClustersMissing(workspace.clusters);
+  const nothingBound = workspaceHasNoBindings(workspace);
 
   // Repair screen: never a white screen, always a way forward.
   if (bothBroken || nothingBound) {
@@ -93,9 +116,12 @@ export function WorkspaceLayout() {
     );
   }
 
-  // The workspace binding, not a route param: outside `clusters/:contextName`
-  // there is none, and the sidebar still has to render.
-  const boundContext = workspace.contextName ?? undefined;
+  /**
+   * The cluster the chrome is scoped to: whichever one the URL is on, and the
+   * first binding elsewhere so a workspace opened on its home page still has a
+   * populated Cluster view. `undefined` only when nothing is bound.
+   */
+  const activeContext = activeClusterName(workspace.clusters, routeContext);
 
   /**
    * Sidebar and tab bar are WORKSPACE chrome, so they live here rather than in
@@ -107,9 +133,9 @@ export function WorkspaceLayout() {
    * Cluster pages keep their own `p-4` scroll container inside ClusterLayout.
    */
   return (
-    <ClusterColorProvider contextName={workspace.contextName ?? ""}>
+    <ClusterColorProvider contextName={activeContext ?? ""}>
       <div className="flex flex-col h-full min-h-0">
-        {(folderBroken || contextBroken) && (
+        {(folderBroken || someClustersMissing) && (
           <WorkspaceBindingBanner
             workspace={workspace}
             mode="banner"
@@ -118,9 +144,9 @@ export function WorkspaceLayout() {
         )}
         <div className="flex flex-1 min-h-0 overflow-hidden">
           <div className="hidden md:flex">
-            <Sidebar workspace={workspace} contextName={boundContext} />
+            <Sidebar workspace={workspace} contextName={activeContext} />
           </div>
-          <MobileSidebarDrawer workspace={workspace} contextName={boundContext} />
+          <MobileSidebarDrawer workspace={workspace} contextName={activeContext} />
           <div className="flex flex-col flex-1 overflow-hidden">
             <TabBar wsId={wsId ?? ""} />
             <main className="flex-1 min-h-0 overflow-hidden">

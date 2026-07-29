@@ -1,14 +1,22 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 
+/** One cluster binding of a workspace. A workspace may hold any number. */
+export interface WorkspaceCluster {
+  contextName: string;
+  /** Derived per-request from the kubeconfig; never persisted. */
+  exists: boolean;
+  /** Binding order. The lowest one is the workspace's default cluster. */
+  sortOrder: number;
+}
+
 export interface Workspace {
   id: string;
   name: string;
   folderPath: string | null;
-  contextName: string | null;
+  /** Always present, possibly empty. Server-ordered by `sortOrder`. */
+  clusters: WorkspaceCluster[];
   sortOrder: number;
   lastOpenedAt: string | null;
-  /** Derived per-request from the kubeconfig; never persisted. */
-  contextExists: boolean;
   /** Derived per-request by stat-ing folderPath; never persisted. */
   folderExists: boolean;
 }
@@ -16,7 +24,8 @@ export interface Workspace {
 export interface WorkspaceInput {
   name: string;
   folderPath: string | null;
-  contextName: string | null;
+  /** Ordered — the index becomes each binding's `sortOrder`. */
+  contextNames: string[];
 }
 
 export function useWorkspaces() {

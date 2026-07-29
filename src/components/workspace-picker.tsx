@@ -8,6 +8,11 @@ import { useToast } from "@/components/ui/toast";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import { useWorkspaces, useDeleteWorkspace, type Workspace } from "@/hooks/use-workspaces";
 import { workspacePath, clusterPath } from "@/lib/paths";
+import {
+  firstUsableCluster,
+  orderedClusters,
+  workspaceNeedsAttention,
+} from "@/lib/workspace-clusters";
 import { WorkspaceDialog } from "@/components/workspace-dialog";
 
 export function WorkspacePicker() {
@@ -57,8 +62,13 @@ export function WorkspacePicker() {
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {hasWorkspaces && workspaces?.map((ws) => {
-          const href = ws.contextName
-            ? clusterPath(ws.id, ws.contextName, "overview")
+          const bound = orderedClusters(ws.clusters);
+          // Straight into the first cluster that actually resolves. A card
+          // whose only clusters are missing opens the workspace home instead,
+          // where the banner explains why — never a link into a dead context.
+          const entry = firstUsableCluster(ws.clusters);
+          const href = entry
+            ? clusterPath(ws.id, entry.contextName, "overview")
             : workspacePath(ws.id);
 
           return (
@@ -74,13 +84,16 @@ export function WorkspacePicker() {
                           <span className="truncate max-w-40">{ws.folderPath}</span>
                         </Badge>
                       )}
-                      {ws.contextName && (
-                        <Badge variant={ws.contextExists ? "secondary" : "warning"}>
+                      {bound.map((cluster) => (
+                        <Badge
+                          key={cluster.contextName}
+                          variant={cluster.exists ? "secondary" : "warning"}
+                        >
                           <Server className="h-3 w-3 mr-1" />
-                          {ws.contextName}
+                          <span className="truncate max-w-40">{cluster.contextName}</span>
                         </Badge>
-                      )}
-                      {(!ws.folderExists && ws.folderPath) || (!ws.contextExists && ws.contextName) ? (
+                      ))}
+                      {workspaceNeedsAttention(ws) ? (
                         <Badge variant="outline" className="text-muted-foreground">
                           <AlertCircle className="h-3 w-3 mr-1" />
                           needs attention

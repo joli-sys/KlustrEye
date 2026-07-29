@@ -42,6 +42,31 @@ export function clusterPath(wsId: string, contextName: string, subPath = ""): st
   return sub ? `${base}/${sub}` : base;
 }
 
+/**
+ * Re-anchor the current location onto another cluster of the SAME workspace.
+ *
+ * A workspace binds many clusters now, so switching cluster no longer means
+ * switching workspace — only the context segment moves. The sub-path rides
+ * along on purpose: comparing `pods` across two clusters is the whole point of
+ * binding them together, and dropping the user back on the overview every time
+ * would make that a four-click round trip.
+ *
+ * A pathname that is not under `fromContext` at all (the workspace home, a
+ * `files/*` route) has no sub-path to carry, so the target cluster's root is
+ * the honest answer rather than some guessed page.
+ */
+export function clusterSwitchHref(
+  wsId: string,
+  fromContext: string,
+  toContext: string,
+  pathname: string,
+  search = ""
+): string {
+  const prefix = clusterPath(wsId, fromContext, "");
+  const rest = pathname.startsWith(prefix) ? pathname.slice(prefix.length) : "";
+  return `${clusterPath(wsId, toContext, rest)}${search}`;
+}
+
 /** Prefix a legacy `/clusters/...` href with a workspace. Idempotent. */
 export function rewriteClusterHref(wsId: string, href: string): string {
   assertWorkspaceId(wsId);

@@ -37,7 +37,7 @@ cargo test -p backend --lib   # Rust backend tests
 
 There is no `db:push`, `db:migrate`, or `db:studio` — those were Prisma-era scripts and no longer exist.
 
-`npm test` runs 80 vitest tests; `cargo test -p backend --lib` runs 64 Rust tests.
+`npm test` runs 125 vitest tests; `cargo test -p backend --lib` runs 69 Rust tests.
 
 ## Project Structure
 
@@ -67,7 +67,9 @@ Routes are `/w/:wsId/clusters/:contextName/...` (see `src/App.tsx`). A legacy `/
 - **Never hand-build cluster hrefs.** Use `src/lib/paths.ts` (`clusterPath`, `workspacePath`, `rewriteClusterHref`) or the `src/hooks/use-cluster-path.ts` hooks (`useWorkspaceId`, `useClusterPath`, `useWorkspacePath`). The one intentional exception is `src/app/page.tsx`, which links to the legacy `/clusters/...` form on purpose as the bare-cluster entry path.
 - **A workspace id may never be the literal string `"clusters"`.** `src/lib/tab-route.ts` locates the cluster segment with `parts.indexOf("clusters")`, so a workspace id of `"clusters"` would match first and resolve the wrong context. `paths.ts` throws on this id and the backend rejects it too.
 - **A tab is never repurposed across kinds.** `syncTabToLocation` (`src/lib/tab-route.ts`) makes the active tab follow the URL only while `deriveTabTargetFromPath` reports the same `kind`; crossing kinds opens a separate tab. A tab's `kind` and `payload` decide its Monaco registry key (`modelKeyForTab`), so rewriting a file tab's href to a cluster page would leave it releasing and dirty-tracking an unrelated buffer.
-- **Folder and cluster bindings are both optional.** `contextExists` and `folderExists` on a `Workspace` (see `src/hooks/use-workspaces.ts`) are computed fresh per request — never persisted. `WorkspaceLayout` (`src/components/workspace-layout.tsx`) degrades gracefully: an inline banner (`WorkspaceBindingBanner`, `mode="banner"`) when one binding is broken, a full-screen repair state (`mode="repair"`) when both are broken or nothing is bound, both offering a "Rebind" action that opens `WorkspaceDialog` to fix the binding in place. Never a white screen.
+- **A workspace binds one folder and ANY NUMBER of clusters.** `Workspace.clusters` (see `src/hooks/use-workspaces.ts`) is an ordered `{ contextName, exists, sortOrder }[]`, always present and possibly empty; `exists` and `folderExists` are computed fresh per request and never persisted. There is no `workspace.contextName` — every question about bindings is a fold over `clusters`, and `src/lib/workspace-clusters.ts` holds those folds as pure functions (`activeClusterName`, `missingClusters`, `allClustersMissing`, …).
+- **The ACTIVE cluster is the route's `:contextName`, not the workspace's.** `WorkspaceLayout` reads it with `useMatch("/w/:wsId/clusters/:contextName/*")` — `useParams` in a parent route cannot see a child's params — and falls back to the first binding elsewhere. `ClusterColorProvider` follows the active cluster so per-cluster theming survives a switch. Switching clusters stays inside the workspace: `clusterSwitchHref` (`src/lib/paths.ts`) moves only the context segment and carries the sub-path along.
+- **Degrade, never dead-end.** `WorkspaceLayout` (`src/components/workspace-layout.tsx`) shows an inline banner (`WorkspaceBindingBanner`, `mode="banner"`) when ANY binding is broken, and the full-screen repair state (`mode="repair"`) only when the folder is broken AND *every* bound cluster is missing, or nothing is bound at all — one working cluster out of two keeps the workspace usable. Both offer a "Rebind" action that opens `WorkspaceDialog`. A missing cluster is still LISTED in the Cluster view, marked, never hidden. Never a white screen.
 - **`contextName` is globally unique** — there is one kubeconfig, so cluster-scoped React Query keys are NOT namespaced by workspace.
 - **Namespace state lives only in `namespaceByWorkspace`** in `ui-store` (`src/lib/stores/ui-store.ts`). There is deliberately no `last_namespace` column on `workspaces` — one source of truth.
 - **Zustand persist migrations are shape-driven, not version-driven.** zustand's `migrate` only runs when the persisted payload already has a numeric `version` that differs from the current one, and only rewrites storage if migration actually ran — a payload lacking `version` would never trigger `migrate` and would persist in its old shape forever. Both `tab-store` (`src/lib/stores/tab-store.ts`, v1) and `ui-store` (v3) detect the old shape directly instead of relying on the `version` field.
@@ -81,7 +83,8 @@ Routes are `/w/:wsId/clusters/:contextName/...` (see `src/App.tsx`). A legacy `/
 - `saved_templates` — YAML templates for resource creation
 - `terminal_sessions` — terminal session tracking
 - `port_forward_sessions` — port-forward process tracking, stale sessions marked stopped on startup
-- `workspaces` — id, name, optional `folder_path`, optional `context_name`, `sort_order`, `last_opened_at`; the folder/cluster bindings a workspace holds. `contextExists`/`folderExists` are derived at read time, not stored here.
+- `workspaces` — id, name, optional `folder_path`, `sort_order`, `last_opened_at`. Its `context_name` column is LEGACY: `workspace_clusters` is authoritative, and the column is only rewritten to the first bound cluster so an older build sharing the database still finds one sane cluster. `folderExists` is derived at read time, not stored here.
+- `workspace_clusters` — `(workspace_id, context_name)` primary key plus `sort_order`; the many-clusters-per-workspace bindings. `exists` is derived per request from one kubeconfig read, never stored.
 
 There is no migration versioning — adding a table is a new `CREATE TABLE IF NOT EXISTS` in `run_migrations()`, but adding a *column* to an existing table later needs a hand-written `ALTER TABLE` guarded by a `PRAGMA table_info` check (the blind `CREATE TABLE IF NOT EXISTS` won't add columns to an already-existing table).
 
