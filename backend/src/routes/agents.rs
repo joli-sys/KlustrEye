@@ -8,7 +8,10 @@ use std::collections::HashMap;
 use uuid::Uuid;
 
 use crate::{
-    agents::{Activity, SpawnRequest},
+    agents::{
+        check_attachment_budget, Activity, SeedAttachment, SessionSeed, SpawnRequest,
+        MAX_ATTACHMENT_TOTAL_BYTES,
+    },
     error::{AppError, Result},
     AppState,
 };
@@ -266,6 +269,23 @@ pub struct AgentSessionBody {
     pub rows: Option<u16>,
     #[serde(default)]
     pub cols: Option<u16>,
+    /// The task to prime the agent with — "explain these logs". Optional; the
+    /// caller supplies the wording, nothing is invented for them.
+    #[serde(default, rename = "initialPrompt")]
+    pub initial_prompt: Option<String>,
+    /// Context the task is about. Written to FILES the composed prompt points
+    /// at, never pasted into the terminal — see `agents`' seeding section for
+    /// why a PTY is the wrong place for a megabyte of pod logs.
+    #[serde(default)]
+    pub attachments: Option<Vec<AgentAttachmentBody>>,
+}
+
+#[derive(Deserialize)]
+pub struct AgentAttachmentBody {
+    /// A suggestion, not a filename — it is sanitized before it reaches the
+    /// disk (`agents::sanitize_attachment_name`).
+    pub name: String,
+    pub content: String,
 }
 
 #[derive(Deserialize)]
@@ -292,6 +312,10 @@ struct AgentSessionRow {
     /// those ran in their workspace's folder, which we cannot reconstruct.
     cwd: Option<String>,
     exit_code: Option<i64>,
+    /// How far the session's seeded prompt got. `Option` only so a row written
+    /// by a build that predates the column still reads; it is `NOT NULL
+    /// DEFAULT 'none'` in the schema.
+    seed_status: Option<String>,
     created_at: String,
     last_activity_at: Option<String>,
     exited_at: Option<String>,
@@ -302,7 +326,7 @@ struct AgentSessionRow {
 /// The recent-sessions query still reads it in SQL — as an ordering proxy,
 /// which is the one thing it is good for.
 const SESSION_COLS: &str = "id, workspace_id, definition_id, title, cwd, exit_code, \
-                            created_at, last_activity_at, exited_at";
+                            seed_status, created_at, last_activity_at, exited_at";
 
 /// The table is the durable record, but a session that has just exited may not
 /// have had its row updated yet — the registry writes it from a task. When the
@@ -355,6 +379,9 @@ fn session_to_json(row: &AgentSessionRow, state: &AppState, has_transcript: bool
         "activity": activity,
         "waitingConfidence": waiting_confidence,
         "hasTranscript": has_transcript,
+        // Reported so the UI can say a seeded prompt was never delivered,
+        // rather than leaving the user staring at an idle agent.
+        "seedStatus": row.seed_status.as_deref().unwrap_or("none"),
         "createdAt": row.created_at,
         "lastActivityAt": row.last_activity_at,
         "exitedAt": row.exited_at,
@@ -542,6 +569,26 @@ pub async fn create_agent_session(
     // A title supplied here is the user's own words, so it counts as custom and
     // suppresses auto-titling from the start. Falling back to the definition's
     // name is the default that auto-titling is allowed to improve on.
+    // Rejected here, before the PTY exists, so an oversized request costs
+    // nothing but a 413.
+    let attachments: Vec<SeedAttachment> = body
+        .attachments
+        .unwrap_or_default()
+        .into_iter()
+        .map(|a| SeedAttachment {
+            name: a.name,
+            content: a.content,
+        })
+        .collect();
+    check_attachment_budget(&attachments, MAX_ATTACHMENT_TOTAL_BYTES)?;
+
+    let seed = SessionSeed {
+        prompt: body.initial_prompt,
+        attachments,
+    };
+    // Neither a prompt nor an attachment is an ordinary session, not an error.
+    let seed = (!seed.is_empty()).then_some(seed);
+
     let requested_title = body
         .title
         .as_deref()
@@ -571,6 +618,7 @@ pub async fn create_agent_session(
                 prompt_patterns,
                 rows: body.rows.unwrap_or(24),
                 cols: body.cols.unwrap_or(80),
+                seed,
             },
         )
         .await?;

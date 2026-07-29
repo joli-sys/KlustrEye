@@ -23,7 +23,7 @@
 
 use std::collections::{HashSet, VecDeque};
 use std::io::{Read, Write};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -102,6 +102,16 @@ pub enum AgentError {
     CapacityExceeded { max: usize },
     #[error("failed to start agent: {0}")]
     Spawn(String),
+    /// Storing a seeded session's attachments failed. The session is not
+    /// started at all: an agent primed with the path of a file that is not
+    /// there is worse than one that never ran.
+    #[error("failed to store agent attachments: {0}")]
+    Attachment(String),
+    /// More attached bytes than one session may carry.
+    #[error(
+        "attachments total {total} bytes, above the {max} byte limit for one session"
+    )]
+    AttachmentsTooLarge { total: usize, max: usize },
     #[error("database error: {0}")]
     Database(#[from] sqlx::Error),
 }
@@ -117,7 +127,8 @@ impl From<AgentError> for AppError {
             | AgentError::CwdMissing(_)
             | AgentError::EmptyCommand => AppError::BadRequest(e.to_string()),
             AgentError::CapacityExceeded { .. } => AppError::TooManyRequests(e.to_string()),
-            AgentError::Spawn(_) => AppError::Internal(e.to_string()),
+            AgentError::AttachmentsTooLarge { .. } => AppError::PayloadTooLarge(e.to_string()),
+            AgentError::Spawn(_) | AgentError::Attachment(_) => AppError::Internal(e.to_string()),
             AgentError::Database(err) => AppError::Database(err),
         }
     }
@@ -261,20 +272,26 @@ pub fn transcript_dir_for_database_url(database_url: &str) -> PathBuf {
         .join(TRANSCRIPT_DIR_NAME)
 }
 
-/// The log file name for a session id, or `None` when the id is not a plain
+/// A session id in its one canonical spelling, or `None` when it is not a plain
 /// UUID.
 ///
-/// Session ids are server-generated UUIDs, but this is the only place an id
-/// becomes a path, so it validates rather than trusts: anything with a
-/// separator, a `..`, or any other shape is rejected outright instead of being
-/// sanitized into something that looks close enough.
-pub fn transcript_file_name(session_id: &str) -> Option<String> {
+/// Session ids are server-generated UUIDs, but this is the only shape allowed to
+/// become a path, so it validates rather than trusts: anything with a separator,
+/// a `..`, or any other shape is rejected outright instead of being sanitized
+/// into something that looks close enough.
+pub fn canonical_session_id(session_id: &str) -> Option<String> {
     let canonical = Uuid::parse_str(session_id).ok()?.hyphenated().to_string();
     // `parse_str` also accepts braced, URN and unhyphenated forms. Those are
     // valid UUIDs but not *this* id shape, and accepting them would mean two
     // spellings of one session mapping to one file.
     (session_id.len() == canonical.len() && session_id.eq_ignore_ascii_case(&canonical))
-        .then(|| format!("{canonical}.log"))
+        .then_some(canonical)
+}
+
+/// The log file name for a session id, or `None` when the id is not a plain
+/// UUID.
+pub fn transcript_file_name(session_id: &str) -> Option<String> {
+    canonical_session_id(session_id).map(|canonical| format!("{canonical}.log"))
 }
 
 /// The session id a log file name refers to, or `None` if it is not one of
@@ -576,6 +593,371 @@ async fn write_all_and_flush(file: &mut tokio::fs::File, data: &[u8]) -> std::io
     file.flush().await
 }
 
+// ---------------------------------------------------------------------------
+// Seeded sessions: a task and its attached context
+// ---------------------------------------------------------------------------
+//
+// Starting an agent from a Kubernetes view means handing it both a task
+// ("explain these logs") and the output it is about. The output does NOT go
+// into the PTY.
+//
+// A terminal cannot take a large paste reliably: every newline is a submit
+// keystroke to an interactive CLI, bracketed-paste support varies per agent,
+// and pod logs are routinely megabytes. So attachments are written to FILES and
+// the composed prompt merely names their absolute paths — robust at any size,
+// and every agent reads files well.
+//
+// The files go under the app-data directory beside the database, never into the
+// user's workspace folder: that is their repo, and dropping log files into it is
+// not ours to do.
+
+/// Directory, beside the database, holding one sub-directory of attachments per
+/// seeded session.
+pub const ATTACHMENT_DIR_NAME: &str = "agent-attachments";
+
+/// Total attachment bytes accepted for one session. Generous, because a pod's
+/// logs are the point; past it the API answers 413 rather than filling the disk.
+pub const MAX_ATTACHMENT_TOTAL_BYTES: usize = 8 * 1024 * 1024;
+
+/// Longest attachment file name, in characters. Long enough for a pod name plus
+/// a container and an extension, short enough to stay under every filesystem's
+/// per-component limit once the ordinal prefix is added.
+pub const ATTACHMENT_NAME_MAX_CHARS: usize = 80;
+
+/// How long the seeder waits for the agent to become ready before giving up.
+///
+/// Bounded because a session that never becomes ready must still be usable: an
+/// undelivered prompt the user can retype beats a hang.
+pub const SEED_READY_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// How often readiness is re-checked while waiting.
+const SEED_POLL_INTERVAL: Duration = Duration::from_millis(100);
+
+/// Pause between the prompt text and the carriage return that submits it.
+///
+/// A TUI agent draws the text into an input box before it handles Enter; the two
+/// arriving in one write is usually fine and occasionally is not, and 150ms is
+/// invisible next to the seconds already spent waiting for readiness.
+const SEED_SUBMIT_DELAY: Duration = Duration::from_millis(150);
+
+/// One file to place beside a seeded session, exactly as the client sent it.
+///
+/// `name` is client-supplied and is NOT trusted as a filename — it goes through
+/// [`attachment_file_name`] before it ever touches the disk.
+#[derive(Debug, Clone)]
+pub struct SeedAttachment {
+    pub name: String,
+    pub content: String,
+}
+
+/// The task and context a session is primed with.
+#[derive(Debug, Clone, Default)]
+pub struct SessionSeed {
+    pub prompt: Option<String>,
+    pub attachments: Vec<SeedAttachment>,
+}
+
+impl SessionSeed {
+    /// Whether there is anything to seed at all. A request carrying neither a
+    /// prompt nor an attachment is not an error, it is simply an ordinary
+    /// session.
+    pub fn is_empty(&self) -> bool {
+        self.prompt.as_deref().map(str::trim).unwrap_or("").is_empty()
+            && self.attachments.is_empty()
+    }
+}
+
+/// How far a session's seed prompt got. Persisted so the UI can say the prompt
+/// was not delivered rather than leaving the user wondering why nothing
+/// happened.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SeedStatus {
+    /// Nothing to send — an ordinary session.
+    None,
+    /// Composed and waiting for the agent to be ready for input.
+    Pending,
+    Sent,
+    /// The agent never went quiet within [`SEED_READY_TIMEOUT`]. The session is
+    /// still perfectly usable; only the prompt was not delivered.
+    TimedOut,
+    /// The process exited before it was ready, or the write failed.
+    Failed,
+}
+
+impl SeedStatus {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            SeedStatus::None => "none",
+            SeedStatus::Pending => "pending",
+            SeedStatus::Sent => "sent",
+            SeedStatus::TimedOut => "timed_out",
+            SeedStatus::Failed => "failed",
+        }
+    }
+}
+
+/// The total size of a set of attachments.
+pub fn attachments_total_bytes(attachments: &[SeedAttachment]) -> usize {
+    attachments
+        .iter()
+        .fold(0usize, |acc, a| acc.saturating_add(a.content.len()))
+}
+
+/// Enforces the per-session attachment budget, returning the accepted total.
+pub fn check_attachment_budget(
+    attachments: &[SeedAttachment],
+    max: usize,
+) -> Result<usize, AgentError> {
+    let total = attachments_total_bytes(attachments);
+    if total > max {
+        return Err(AgentError::AttachmentsTooLarge { total, max });
+    }
+    Ok(total)
+}
+
+/// Turns a client-supplied attachment name into a single, harmless path
+/// component, or `None` when nothing usable survives.
+///
+/// The name arrives over the wire and becomes a filename, so it is treated as
+/// hostile: separators, drive letters and the other characters that steer a path
+/// are replaced, control characters (including NUL) go with them, and leading or
+/// trailing dots are stripped so `.` and `..` cannot be spelled at all. The
+/// final guard is structural rather than a blocklist — the result must parse as
+/// exactly one [`Component::Normal`], the same rule `fs::resolve_in_workspace`
+/// applies to client paths.
+pub fn sanitize_attachment_name(name: &str) -> Option<String> {
+    let replaced: String = name
+        .chars()
+        .map(|c| {
+            if c.is_control() || matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|') {
+                '-'
+            } else {
+                c
+            }
+        })
+        .collect();
+
+    // Dots only at the edges: this is what makes `..` and `.` unrepresentable,
+    // while `pod.log` keeps its extension.
+    let trimmed = replaced.trim().trim_matches('.').trim();
+
+    // Char-wise, never byte-wise — a name may hold any UTF-8 and a byte slice
+    // would land mid-codepoint.
+    let capped: String = trimmed.chars().take(ATTACHMENT_NAME_MAX_CHARS).collect();
+    let capped = capped.trim().to_string();
+
+    // A name made entirely of what the replacements left behind — `../..`
+    // becomes `-` — names nothing. Requiring one alphanumeric keeps such a name
+    // from being stored as punctuation the user cannot recognise; the caller's
+    // positional default is more use than `--`.
+    if !capped.chars().any(char::is_alphanumeric) {
+        return None;
+    }
+
+    // Structural check, not a blocklist: whatever the replacements above missed,
+    // a name that is not exactly one ordinary component never reaches the disk.
+    let path = Path::new(&capped);
+    let mut components = path.components();
+    match (components.next(), components.next()) {
+        (Some(Component::Normal(_)), None) => Some(capped),
+        _ => None,
+    }
+}
+
+/// The file name an attachment is stored under.
+///
+/// The ordinal prefix is not decoration. Two attachments in one request may
+/// share a name — two containers' logs are both `logs.txt` — and without it the
+/// second would silently overwrite the first. It also guarantees a name that
+/// sanitizes away entirely still gets a file.
+pub fn attachment_file_name(index: usize, name: &str) -> String {
+    let base = sanitize_attachment_name(name).unwrap_or_else(|| "attachment".to_string());
+    format!("{:02}-{base}", index + 1)
+}
+
+/// Composes what the agent is actually asked, or `None` when there is nothing
+/// to ask.
+///
+/// Deliberately mechanical: the caller's wording, then the paths of the files
+/// they attached. No invented instructions and no persona — the caller supplies
+/// the task, this only tells the agent where the context is.
+pub fn compose_seed_prompt(initial_prompt: Option<&str>, attachment_paths: &[String]) -> Option<String> {
+    let prompt = initial_prompt.map(str::trim).filter(|p| !p.is_empty());
+
+    match (prompt, attachment_paths.is_empty()) {
+        (None, true) => None,
+        (Some(prompt), true) => Some(prompt.to_string()),
+        (prompt, false) => {
+            let mut out = String::new();
+            if let Some(prompt) = prompt {
+                out.push_str(prompt);
+                out.push_str("\n\n");
+            }
+            out.push_str("Attached files:\n");
+            out.push_str(&attachment_paths.join("\n"));
+            Some(out)
+        }
+    }
+}
+
+/// The attachment directory belonging to a transcript directory: a sibling of
+/// it, so both sit in the same app-data directory as the database.
+///
+/// Derived from the transcript directory rather than from `DATABASE_URL` again
+/// so there is one answer to "where is the app-data directory" and the two can
+/// never drift apart.
+pub fn attachment_dir_beside_transcripts(transcript_dir: &Path) -> PathBuf {
+    transcript_dir
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."))
+        .join(ATTACHMENT_DIR_NAME)
+}
+
+/// Reads and writes per-session attachment directories under one root.
+///
+/// Cheap to clone — it is a path and nothing else.
+#[derive(Clone, Debug)]
+pub struct AttachmentStore {
+    dir: Arc<PathBuf>,
+}
+
+impl AttachmentStore {
+    pub fn new(dir: PathBuf) -> Self {
+        Self { dir: Arc::new(dir) }
+    }
+
+    pub fn dir(&self) -> &Path {
+        self.dir.as_path()
+    }
+
+    /// A session's own directory, or `None` when the id is not a plain UUID.
+    pub fn dir_for(&self, session_id: &str) -> Option<PathBuf> {
+        canonical_session_id(session_id).map(|id| self.dir.join(id))
+    }
+
+    /// Writes every attachment and returns their ABSOLUTE paths, in order.
+    ///
+    /// Absolute because the paths go into the prompt and the agent's working
+    /// directory is the workspace folder, not ours — a relative path would name
+    /// a file that is not there.
+    pub async fn write_all(
+        &self,
+        session_id: &str,
+        attachments: &[SeedAttachment],
+    ) -> std::io::Result<Vec<String>> {
+        let dir = self
+            .dir_for(session_id)
+            .ok_or_else(|| std::io::Error::other("session id is not a plain UUID"))?;
+        tokio::fs::create_dir_all(&dir).await?;
+        let dir = tokio::fs::canonicalize(&dir).await.unwrap_or(dir);
+
+        let mut paths = Vec::with_capacity(attachments.len());
+        for (index, attachment) in attachments.iter().enumerate() {
+            let path = dir.join(attachment_file_name(index, &attachment.name));
+            tokio::fs::write(&path, attachment.content.as_bytes()).await?;
+            paths.push(path.to_string_lossy().into_owned());
+        }
+        Ok(paths)
+    }
+
+    /// Removes a session's attachments. Missing is success.
+    pub async fn delete(&self, session_id: &str) {
+        let Some(dir) = self.dir_for(session_id) else {
+            return;
+        };
+        if let Err(e) = tokio::fs::remove_dir_all(&dir).await {
+            if e.kind() != std::io::ErrorKind::NotFound {
+                tracing::warn!(dir = %dir.display(), error = %e, "failed to delete agent attachments");
+            }
+        }
+    }
+
+    /// Every session id with an attachment directory, from ONE directory read.
+    pub async fn list_ids(&self) -> HashSet<String> {
+        let mut ids = HashSet::new();
+        let Ok(mut entries) = tokio::fs::read_dir(self.dir.as_path()).await else {
+            return ids;
+        };
+        while let Ok(Some(entry)) = entries.next_entry().await {
+            if let Some(id) = canonical_session_id(&entry.file_name().to_string_lossy()) {
+                ids.insert(id);
+            }
+        }
+        ids
+    }
+}
+
+/// Records how a session's seeding ended.
+async fn record_seed_status(db: &SqlitePool, session_id: &str, status: SeedStatus) {
+    if let Err(e) = sqlx::query("UPDATE agent_sessions SET seed_status = ? WHERE id = ?")
+        .bind(status.as_str())
+        .bind(session_id)
+        .execute(db)
+        .await
+    {
+        tracing::warn!(session = %session_id, error = %e, "failed to record agent seed status");
+    }
+}
+
+/// Waits for the agent to be ready for input, then writes the seeded prompt.
+///
+/// **Timing is the whole difficulty here.** Bytes written before the agent draws
+/// its prompt are swallowed or mangled: agents print a banner, initialise, and
+/// only then start reading. The readiness signal reused here is the one the
+/// activity indicator already derives — the session has produced output and then
+/// gone quiet for [`ACTIVITY_WORKING_WINDOW`]. It is a proxy, not an
+/// observation (see [`Activity`]), which is exactly why the wait is bounded.
+///
+/// Runs on its own task: nothing in a request handler ever waits for this.
+async fn seed_session_when_ready(db: SqlitePool, session: Arc<AgentSession>, prompt: String) {
+    // Exactly once per session, whatever the caller does. A second send would
+    // inject the prompt into the middle of the agent's work.
+    if !session.claim_seed() {
+        return;
+    }
+
+    let deadline = Instant::now() + SEED_READY_TIMEOUT;
+    let status = loop {
+        // A process that died before it was ready is never written to — the
+        // write would go nowhere and `sent` would be a lie.
+        if !session.is_running() {
+            break SeedStatus::Failed;
+        }
+        // `has_produced_output` matters: `last_output` is seeded at spawn, so
+        // without it a session that has printed nothing at all would read as
+        // quiet-after-working the moment the window elapsed.
+        if session.has_produced_output() && session.activity().0 == Activity::Waiting {
+            break match session.write_input(prompt.into_bytes()).await {
+                Ok(()) => {
+                    tokio::time::sleep(SEED_SUBMIT_DELAY).await;
+                    match session.write_input(b"\r".to_vec()).await {
+                        Ok(()) => SeedStatus::Sent,
+                        Err(_) => SeedStatus::Failed,
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(session = %session.id, error = %e, "failed to write agent seed prompt");
+                    SeedStatus::Failed
+                }
+            };
+        }
+        if Instant::now() >= deadline {
+            break SeedStatus::TimedOut;
+        }
+        tokio::time::sleep(SEED_POLL_INTERVAL).await;
+    };
+
+    if status != SeedStatus::Sent {
+        tracing::info!(
+            session = %session.id,
+            status = status.as_str(),
+            "agent seed prompt was not delivered"
+        );
+    }
+    record_seed_status(&db, &session.id, status).await;
+}
+
 /// Startup retention: drops rows and logs for exited sessions beyond the most
 /// recent [`TRANSCRIPT_RETENTION_PER_WORKSPACE`] per workspace, oldest first,
 /// then sweeps log files that no longer have a row at all.
@@ -599,6 +981,12 @@ pub async fn prune_agent_sessions(
 
     let doomed = sessions_to_prune(&exited, keep_per_workspace);
 
+    // A seeded session's attachments belong to its row exactly as its log does,
+    // so they are dropped in the same places. Derived from the transcript
+    // directory rather than passed in, so a caller cannot wire up one and forget
+    // the other.
+    let attachments = store.map(|s| AttachmentStore::new(attachment_dir_beside_transcripts(s.dir())));
+
     for id in &doomed {
         sqlx::query("DELETE FROM agent_sessions WHERE id = ?")
             .bind(id)
@@ -606,6 +994,9 @@ pub async fn prune_agent_sessions(
             .await?;
         if let Some(store) = store {
             store.delete(id).await;
+        }
+        if let Some(attachments) = &attachments {
+            attachments.delete(id).await;
         }
     }
 
@@ -621,6 +1012,14 @@ pub async fn prune_agent_sessions(
         for id in store.list_ids().await {
             if !live.contains(&id) {
                 store.delete(&id).await;
+            }
+        }
+
+        if let Some(attachments) = &attachments {
+            for id in attachments.list_ids().await {
+                if !live.contains(&id) {
+                    attachments.delete(&id).await;
+                }
             }
         }
 
@@ -1176,6 +1575,17 @@ pub struct AgentSession {
     /// chance to speak.
     last_output: Arc<Mutex<Instant>>,
 
+    /// Whether the process has ever printed anything.
+    ///
+    /// Separate from `last_output`, which is seeded at spawn and so cannot
+    /// distinguish "quiet after working" from "has not started talking yet".
+    /// The seeder needs that distinction — see [`seed_session_when_ready`].
+    saw_output: Arc<std::sync::atomic::AtomicBool>,
+
+    /// Latches when the seed prompt is claimed for sending. The prompt goes in
+    /// exactly once, ever.
+    seed_claimed: std::sync::atomic::AtomicBool,
+
     /// Compiled once when the session starts, shared with every other session
     /// launched from the same pattern set.
     prompt_patterns: Arc<PromptPatterns>,
@@ -1206,6 +1616,24 @@ impl AgentSession {
     /// none).
     pub fn since_last_output(&self) -> Duration {
         self.last_output.lock().expect("last_output mutex").elapsed()
+    }
+
+    /// Whether the process has printed anything at all yet.
+    pub fn has_produced_output(&self) -> bool {
+        self.saw_output.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Claims the one-shot right to write the seed prompt, returning `false`
+    /// when it has already been claimed.
+    pub fn claim_seed(&self) -> bool {
+        self.seed_claimed
+            .compare_exchange(
+                false,
+                true,
+                std::sync::atomic::Ordering::SeqCst,
+                std::sync::atomic::Ordering::SeqCst,
+            )
+            .is_ok()
     }
 
     /// The inferred [`Activity`] plus, when waiting, how much to trust it.
@@ -1369,6 +1797,9 @@ pub struct SpawnRequest {
     pub prompt_patterns: Vec<String>,
     pub rows: u16,
     pub cols: u16,
+    /// A task and the context it is about, to prime the session with. `None` is
+    /// an ordinary session that waits for the user to type.
+    pub seed: Option<SessionSeed>,
 }
 
 /// Process-global registry of agent PTYs. Cloneable and cheap: everything is
@@ -1391,6 +1822,10 @@ pub struct AgentRegistry {
     /// no durable transcripts at all — the registry still works, sessions are
     /// simply unreadable once the process that ran them is gone.
     transcripts: Option<TranscriptStore>,
+    /// Where seeded sessions' attached context is written. `None` means a
+    /// session cannot be seeded with attachments at all; a bare prompt still
+    /// works.
+    attachments: Option<AttachmentStore>,
 }
 
 impl Default for AgentRegistry {
@@ -1408,13 +1843,18 @@ impl AgentRegistry {
             spawn_lock: Arc::new(tokio::sync::Mutex::new(())),
             pattern_cache: Arc::new(DashMap::new()),
             transcripts: None,
+            attachments: None,
         }
     }
 
-    /// A registry that mirrors every session's output into `dir`.
+    /// A registry that mirrors every session's output into `dir`, and stores
+    /// seeded sessions' attachments in `dir`'s sibling — one app-data directory
+    /// for both, without a second copy of how that directory is located.
     pub fn with_transcripts(dir: PathBuf) -> Self {
+        let attachments = AttachmentStore::new(attachment_dir_beside_transcripts(&dir));
         Self {
             transcripts: Some(TranscriptStore::new(dir)),
+            attachments: Some(attachments),
             ..Self::new()
         }
     }
@@ -1423,6 +1863,18 @@ impl AgentRegistry {
     /// session) and the API layer (reporting whether one exists).
     pub fn transcripts(&self) -> Option<&TranscriptStore> {
         self.transcripts.as_ref()
+    }
+
+    /// Where seeded sessions' attachments live.
+    pub fn attachments(&self) -> Option<&AttachmentStore> {
+        self.attachments.as_ref()
+    }
+
+    /// Drops a session's attachments after a spawn that never completed.
+    async fn discard_attachments(&self, id: &str) {
+        if let Some(store) = &self.attachments {
+            store.delete(id).await;
+        }
     }
 
     pub fn get(&self, id: &str) -> Option<Arc<AgentSession>> {
@@ -1496,6 +1948,12 @@ impl AgentRegistry {
             &req.env,
         )?;
 
+        // Checked here as well as at the API boundary, so no caller can spend
+        // the disk by going around the handler.
+        if let Some(seed) = &req.seed {
+            check_attachment_budget(&seed.attachments, MAX_ATTACHMENT_TOTAL_BYTES)?;
+        }
+
         let guard = self.spawn_lock.lock().await;
         if self.live_count() >= MAX_LIVE_SESSIONS {
             return Err(AgentError::CapacityExceeded {
@@ -1504,16 +1962,51 @@ impl AgentRegistry {
         }
 
         let id = Uuid::new_v4().to_string();
-        let session = self.start_pty(db, &id, &req, &plan)?;
+
+        // Attachments become files BEFORE the process starts, so the paths the
+        // prompt names are already readable by the time the agent sees them.
+        // A failure here aborts the spawn: an agent pointed at a file that is
+        // not there is worse than one that never ran.
+        let seed_prompt = match &req.seed {
+            Some(seed) => {
+                let paths = if seed.attachments.is_empty() {
+                    Vec::new()
+                } else {
+                    let store = self
+                        .attachments
+                        .as_ref()
+                        .ok_or_else(|| AgentError::Attachment("no attachment directory".into()))?;
+                    store
+                        .write_all(&id, &seed.attachments)
+                        .await
+                        .map_err(|e| AgentError::Attachment(e.to_string()))?
+                };
+                compose_seed_prompt(seed.prompt.as_deref(), &paths)
+            }
+            None => None,
+        };
+
+        let session = match self.start_pty(db, &id, &req, &plan) {
+            Ok(session) => session,
+            Err(e) => {
+                self.discard_attachments(&id).await;
+                return Err(e);
+            }
+        };
 
         // The resolved cwd is persisted, not re-derived on read: it is where
         // this session actually ran, and several sessions in one workspace are
         // otherwise indistinguishable.
-        sqlx::query(
+        let seed_status = if seed_prompt.is_some() {
+            SeedStatus::Pending
+        } else {
+            SeedStatus::None
+        };
+        let inserted = sqlx::query(
             "INSERT INTO agent_sessions
              (id, workspace_id, definition_id, title, title_is_custom, cwd,
-              status, created_at, last_activity_at)
-             VALUES (?, ?, ?, ?, ?, ?, 'running', datetime('now'), datetime('now'))",
+              status, seed_status, created_at, last_activity_at)
+             VALUES (?, ?, ?, ?, ?, ?, 'running', ?, datetime('now'), datetime('now'))",
         )
         .bind(&id)
         .bind(&req.workspace_id)
@@ -1521,9 +2014,27 @@ impl AgentRegistry {
         .bind(&req.title)
         .bind(i64::from(req.title_is_custom))
         .bind(plan.cwd.to_string_lossy().as_ref())
+        .bind(seed_status.as_str())
         .execute(db)
-        .await
-        .inspect_err(|_| session.kill())?;
+        .await;
+
+        if let Err(e) = inserted {
+            session.kill();
+            self.discard_attachments(&id).await;
+            return Err(e.into());
+        }
+
+        // Started only after the row exists, so the seeder's `seed_status`
+        // write can never land before the row it updates. It runs on its own
+        // task and this request does not wait for it — seeding takes seconds
+        // and a handler that blocked on it would be a hang.
+        if let Some(prompt) = seed_prompt {
+            tokio::spawn(seed_session_when_ready(
+                db.clone(),
+                session.clone(),
+                prompt,
+            ));
+        }
 
         let info = session.info();
         self.sessions.insert(id, session);
@@ -1576,6 +2087,7 @@ impl AgentRegistry {
         let (output_tx, _) = broadcast::channel::<Arc<[u8]>>(OUTPUT_CHANNEL_CAPACITY);
         let scrollback = Arc::new(Mutex::new(ScrollbackBuffer::new(SCROLLBACK_CAPACITY)));
         let last_output = Arc::new(Mutex::new(Instant::now()));
+        let saw_output = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let title = Arc::new(Mutex::new(req.title.clone()));
         let title_is_custom = Arc::new(std::sync::atomic::AtomicBool::new(req.title_is_custom));
 
@@ -1594,6 +2106,8 @@ impl AgentRegistry {
             pid,
             status: Mutex::new(SessionStatus::Running),
             last_output: last_output.clone(),
+            saw_output: saw_output.clone(),
+            seed_claimed: std::sync::atomic::AtomicBool::new(false),
             prompt_patterns: self.compiled_patterns(&req.prompt_patterns),
         });
 
@@ -1654,6 +2168,7 @@ impl AgentRegistry {
                 // every chunk (it is one monotonic clock read), unlike the
                 // throttled SQLite write below, which exists only for display.
                 *last_output.lock().expect("last_output mutex") = Instant::now();
+                saw_output.store(true, std::sync::atomic::Ordering::Relaxed);
 
                 if auto_title_pending {
                     if opening.len() < AUTO_TITLE_SCAN_BYTES {
@@ -2500,6 +3015,270 @@ mod tests {
             with.transcripts().map(|s| s.dir().to_path_buf()),
             Some(PathBuf::from("/tmp/agent-logs"))
         );
+    }
+
+    // -- attachment names --------------------------------------------------
+
+    #[test]
+    fn an_ordinary_attachment_name_survives_intact() {
+        assert_eq!(
+            sanitize_attachment_name("api-server-7d9f.log"),
+            Some("api-server-7d9f.log".to_string())
+        );
+        assert_eq!(
+            sanitize_attachment_name("pod logs (nginx).txt"),
+            Some("pod logs (nginx).txt".to_string())
+        );
+    }
+
+    #[test]
+    fn a_traversal_attempt_cannot_survive_sanitising() {
+        // The case this function exists for: a name is client-supplied and
+        // becomes a filename, so `../../.ssh/authorized_keys` must be
+        // impossible — not merely unlikely.
+        for hostile in [
+            "../../.ssh/authorized_keys",
+            "..",
+            "../",
+            "../../..",
+            "....//....//etc/passwd",
+            "..\\..\\Windows\\System32\\config",
+        ] {
+            let sanitized = sanitize_attachment_name(hostile);
+            match sanitized {
+                None => {}
+                Some(name) => {
+                    assert!(!name.contains('/'), "{hostile:?} kept a separator: {name:?}");
+                    assert!(!name.contains('\\'), "{hostile:?} kept a separator: {name:?}");
+                    assert_ne!(name, "..");
+                    assert_ne!(name, ".");
+                    // Whatever survived must be exactly one ordinary component.
+                    let path = Path::new(&name);
+                    assert_eq!(path.components().count(), 1, "{hostile:?} -> {name:?}");
+                    assert!(matches!(
+                        path.components().next(),
+                        Some(Component::Normal(_))
+                    ));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn an_absolute_path_is_reduced_to_a_plain_name() {
+        // The leading separator is what makes `join` discard our directory
+        // entirely, so it is the one character that must not survive.
+        let name = sanitize_attachment_name("/etc/passwd").expect("name");
+        assert!(!name.contains('/'));
+        assert_eq!(name, "-etc-passwd");
+
+        // Windows drive-relative and absolute forms: the colon goes too, so
+        // `C:` can never re-anchor the path.
+        let win = sanitize_attachment_name(r"C:\Windows\win.ini").expect("name");
+        assert!(!win.contains('\\') && !win.contains(':'));
+    }
+
+    #[test]
+    fn control_characters_never_reach_a_filename() {
+        let name = sanitize_attachment_name("logs\u{0}\n\r\t\u{1b}[31m.txt").expect("name");
+        assert!(!name.chars().any(char::is_control), "{name:?}");
+    }
+
+    #[test]
+    fn a_name_that_is_only_hostile_leaves_nothing() {
+        // `None` rather than a guess: the caller substitutes a positional
+        // default, which is honest about having discarded the request's name.
+        assert_eq!(sanitize_attachment_name(""), None);
+        assert_eq!(sanitize_attachment_name("   "), None);
+        assert_eq!(sanitize_attachment_name("."), None);
+        assert_eq!(sanitize_attachment_name(".."), None);
+        assert_eq!(sanitize_attachment_name("\u{0}\u{1}"), None);
+        // Nothing but the placeholders the replacements left behind.
+        assert_eq!(sanitize_attachment_name("../.."), None);
+        assert_eq!(sanitize_attachment_name("///"), None);
+    }
+
+    #[test]
+    fn a_long_name_is_capped_by_characters_not_bytes() {
+        // Pod and container names concatenate into very long labels, and a
+        // byte cap would land mid-codepoint on a non-ASCII one.
+        let long = sanitize_attachment_name(&"é".repeat(500)).expect("name");
+        assert_eq!(long.chars().count(), ATTACHMENT_NAME_MAX_CHARS);
+    }
+
+    #[test]
+    fn two_attachments_with_one_name_get_two_files() {
+        // Two containers' logs are both `logs.txt`; without the ordinal the
+        // second would silently overwrite the first.
+        assert_eq!(attachment_file_name(0, "logs.txt"), "01-logs.txt");
+        assert_eq!(attachment_file_name(1, "logs.txt"), "02-logs.txt");
+        // …and a name that sanitizes away still gets a file of its own.
+        assert_eq!(attachment_file_name(2, "../.."), "03-attachment");
+    }
+
+    #[test]
+    fn a_stored_file_name_is_always_one_plain_component() {
+        for hostile in ["../../etc/passwd", "/etc/passwd", "..", "\u{0}", "", "a/b"] {
+            let name = attachment_file_name(0, hostile);
+            let path = Path::new(&name);
+            assert_eq!(path.components().count(), 1, "{hostile:?} -> {name:?}");
+            assert!(matches!(
+                path.components().next(),
+                Some(Component::Normal(_))
+            ));
+        }
+    }
+
+    // -- attachment budget -------------------------------------------------
+
+    fn attachment(name: &str, content: &str) -> SeedAttachment {
+        SeedAttachment {
+            name: name.to_string(),
+            content: content.to_string(),
+        }
+    }
+
+    #[test]
+    fn attachment_sizes_are_summed_across_the_whole_request() {
+        let set = vec![attachment("a.log", "12345"), attachment("b.log", "678")];
+        assert_eq!(attachments_total_bytes(&set), 8);
+        assert_eq!(attachments_total_bytes(&[]), 0);
+        assert_eq!(check_attachment_budget(&set, 8).ok(), Some(8));
+    }
+
+    #[test]
+    fn passing_the_budget_is_a_413_not_a_full_disk() {
+        let set = vec![attachment("a.log", "12345"), attachment("b.log", "678")];
+        let err = check_attachment_budget(&set, 7).expect_err("over budget");
+        assert!(matches!(
+            err,
+            AgentError::AttachmentsTooLarge { total: 8, max: 7 }
+        ));
+
+        let mapped: AppError = err.into();
+        match mapped {
+            AppError::PayloadTooLarge(msg) => {
+                // Both numbers, so the client can tell how much to trim.
+                assert!(msg.contains('8') && msg.contains('7'), "{msg}");
+            }
+            other => panic!("expected PayloadTooLarge, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn the_budget_counts_bytes_not_characters() {
+        // A megabyte of UTF-8 logs is a megabyte of disk whatever it says.
+        let multibyte = attachment("a.log", &"é".repeat(10));
+        assert_eq!(attachments_total_bytes(&[multibyte]), 20);
+    }
+
+    // -- composed prompt ---------------------------------------------------
+
+    #[test]
+    fn the_prompt_names_every_attachment_by_absolute_path() {
+        let paths = vec![
+            "/data/agent-attachments/s1/01-pod.log".to_string(),
+            "/data/agent-attachments/s1/02-events.txt".to_string(),
+        ];
+        assert_eq!(
+            compose_seed_prompt(Some("Explain these logs."), &paths),
+            Some(
+                "Explain these logs.\n\n\
+                 Attached files:\n\
+                 /data/agent-attachments/s1/01-pod.log\n\
+                 /data/agent-attachments/s1/02-events.txt"
+                    .to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn a_prompt_without_attachments_is_passed_through_verbatim() {
+        // Nothing is invented on the caller's behalf — no persona, no
+        // instructions they did not write.
+        assert_eq!(
+            compose_seed_prompt(Some("  Explain these logs.  "), &[]),
+            Some("Explain these logs.".to_string())
+        );
+    }
+
+    #[test]
+    fn attachments_without_a_prompt_still_say_where_they_are() {
+        assert_eq!(
+            compose_seed_prompt(None, &["/data/a/01-pod.log".to_string()]),
+            Some("Attached files:\n/data/a/01-pod.log".to_string())
+        );
+        assert_eq!(
+            compose_seed_prompt(Some("   "), &["/data/a/01-pod.log".to_string()]),
+            Some("Attached files:\n/data/a/01-pod.log".to_string())
+        );
+    }
+
+    #[test]
+    fn nothing_to_seed_composes_nothing() {
+        assert_eq!(compose_seed_prompt(None, &[]), None);
+        assert_eq!(compose_seed_prompt(Some("  "), &[]), None);
+
+        assert!(SessionSeed::default().is_empty());
+        assert!(SessionSeed {
+            prompt: Some("  ".to_string()),
+            attachments: Vec::new(),
+        }
+        .is_empty());
+        assert!(!SessionSeed {
+            prompt: None,
+            attachments: vec![attachment("a.log", "x")],
+        }
+        .is_empty());
+    }
+
+    // -- seed status and storage ------------------------------------------
+
+    #[test]
+    fn seed_status_strings_are_the_stored_and_wire_values() {
+        assert_eq!(SeedStatus::None.as_str(), "none");
+        assert_eq!(SeedStatus::Pending.as_str(), "pending");
+        assert_eq!(SeedStatus::Sent.as_str(), "sent");
+        assert_eq!(SeedStatus::TimedOut.as_str(), "timed_out");
+        assert_eq!(SeedStatus::Failed.as_str(), "failed");
+    }
+
+    #[test]
+    fn attachments_sit_beside_the_transcripts_in_the_app_data_directory() {
+        assert_eq!(
+            attachment_dir_beside_transcripts(Path::new(
+                "/Users/x/Library/Application Support/KlustrEye/agent-logs"
+            )),
+            PathBuf::from("/Users/x/Library/Application Support/KlustrEye/agent-attachments")
+        );
+        assert_eq!(
+            attachment_dir_beside_transcripts(Path::new("agent-logs")),
+            PathBuf::from("./agent-attachments")
+        );
+    }
+
+    #[test]
+    fn an_attachment_directory_is_only_ever_named_by_a_plain_uuid() {
+        // Same rule as the transcript path: a session id is the only thing that
+        // names a directory, so it is validated rather than sanitized.
+        let store = AttachmentStore::new(PathBuf::from("/tmp/agent-attachments"));
+        assert_eq!(
+            store.dir_for(A_UUID),
+            Some(PathBuf::from(format!("/tmp/agent-attachments/{A_UUID}")))
+        );
+        for hostile in ["../escape", "", "not-a-uuid", "3f2b1c4a9d8e4f108a2b5c6d7e8f9a0b"] {
+            assert!(store.dir_for(hostile).is_none(), "accepted {hostile:?}");
+        }
+    }
+
+    #[test]
+    fn a_registry_with_transcripts_can_also_store_attachments() {
+        let reg = AgentRegistry::with_transcripts(PathBuf::from("/tmp/data/agent-logs"));
+        assert_eq!(
+            reg.attachments().map(|s| s.dir().to_path_buf()),
+            Some(PathBuf::from("/tmp/data/agent-attachments"))
+        );
+        assert!(AgentRegistry::new().attachments().is_none());
     }
 
     #[test]

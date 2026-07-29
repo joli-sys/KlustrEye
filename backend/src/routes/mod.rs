@@ -14,7 +14,7 @@ pub mod settings;
 pub mod workspaces;
 
 use axum::{
-    extract::{Path, State, WebSocketUpgrade},
+    extract::{DefaultBodyLimit, Path, State, WebSocketUpgrade},
     response::IntoResponse,
     routing::{delete, get, patch, post, put},
     Router,
@@ -27,8 +27,15 @@ use crate::{
         terminal::handle_terminal,
         watch::handle_watch,
     },
+    agents::MAX_ATTACHMENT_TOTAL_BYTES,
     AppState,
 };
+
+/// Request body ceiling for creating an agent session, which may carry attached
+/// context. Twice the attachment budget: JSON escaping roughly doubles a log in
+/// the worst case, and the honest 413 is the one the handler raises against
+/// `MAX_ATTACHMENT_TOTAL_BYTES`, naming the actual limit.
+const AGENT_SESSION_BODY_LIMIT: usize = 2 * MAX_ATTACHMENT_TOTAL_BYTES;
 
 pub fn build_router(state: AppState) -> Router {
     Router::new()
@@ -130,8 +137,18 @@ pub fn build_router(state: AppState) -> Router {
             .delete(agents::delete_agent_definition)
         )
         // Agent sessions (live PTYs, outliving the socket that started them)
+        //
+        // The body limit is raised on THIS route alone. A session may be seeded
+        // with attached context up to `agents::MAX_ATTACHMENT_TOTAL_BYTES`, and
+        // axum's 2 MiB default would reject a few megabytes of pod logs before
+        // the handler ever saw them — with "length limit exceeded", which says
+        // nothing about attachments. The headroom over the attachment cap is
+        // for JSON escaping: a log full of newlines and quotes inflates on the
+        // wire. Every other route keeps the default.
         .route("/api/workspaces/:ws_id/agent-sessions",
-            get(agents::list_agent_sessions).post(agents::create_agent_session))
+            get(agents::list_agent_sessions)
+                .post(agents::create_agent_session)
+                .layer(DefaultBodyLimit::max(AGENT_SESSION_BODY_LIMIT)))
         // MUST stay above `/api/agent-sessions/:id` — a literal segment
         // registered after the pattern is captured by it, and "recent" would
         // be looked up as a session id.

@@ -335,6 +335,7 @@ pub(crate) async fn run_migrations(pool: &SqlitePool) -> anyhow::Result<()> {
             cwd TEXT,
             status TEXT NOT NULL DEFAULT 'running',
             exit_code INTEGER,
+            seed_status TEXT NOT NULL DEFAULT 'none',
             created_at TEXT NOT NULL DEFAULT (datetime('now')),
             last_activity_at TEXT,
             exited_at TEXT
@@ -343,8 +344,8 @@ pub(crate) async fn run_migrations(pool: &SqlitePool) -> anyhow::Result<()> {
     .execute(pool)
     .await?;
 
-    // Both columns postdate `agent_sessions`, so the statement above adds them
-    // only on a fresh database; an existing one needs the guarded ALTER.
+    // All three columns postdate `agent_sessions`, so the statement above adds
+    // them only on a fresh database; an existing one needs the guarded ALTER.
     //
     // `cwd` is nullable on purpose: rows written before per-session working
     // directories existed ran in their workspace's folder, and inventing a path
@@ -357,6 +358,16 @@ pub(crate) async fn run_migrations(pool: &SqlitePool) -> anyhow::Result<()> {
         "INTEGER NOT NULL DEFAULT 0",
     )
     .await?;
+    // `'none'` is the honest value for every existing row: nothing was ever
+    // seeded before this column existed. See `agents::SeedStatus` for the rest
+    // of the vocabulary.
+    add_column_if_missing(
+        pool,
+        "agent_sessions",
+        "seed_status",
+        "TEXT NOT NULL DEFAULT 'none'",
+    )
+    .await?;
 
     // An agent process cannot outlive the server that spawned it — the registry
     // holding its PTY is in-memory. Leaving these rows 'running' would make the
@@ -367,6 +378,13 @@ pub(crate) async fn run_migrations(pool: &SqlitePool) -> anyhow::Result<()> {
     )
     .execute(pool)
     .await?;
+
+    // A seed left 'pending' was waiting on a process this server no longer has,
+    // so it can never be delivered. Leaving it pending would show a spinner
+    // forever; 'failed' is what actually happened.
+    sqlx::query("UPDATE agent_sessions SET seed_status = 'failed' WHERE seed_status = 'pending'")
+        .execute(pool)
+        .await?;
 
     Ok(())
 }
