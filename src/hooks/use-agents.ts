@@ -62,12 +62,28 @@ export interface AgentSession {
    */
   titleIsCustom?: boolean;
   /**
+   * Whether a stored transcript exists for this session. It is what separates
+   * an exited session that still opens and replays what it did from one that
+   * would open an empty terminal — sessions predating transcript persistence,
+   * or whose file has been pruned. Optional for the same reason as `activity`,
+   * and absence must be read as "no transcript", never as "probably fine".
+   */
+  hasTranscript?: boolean;
+  /**
    * Optional: a client talking to an older/rolling-out backend may not see
    * these fields at all, so every reader must treat their absence as
    * "unknown" rather than assume a shape that isn't there.
    */
   activity?: AgentActivity;
   waitingConfidence?: WaitingConfidence;
+}
+
+/**
+ * A session listed outside its own workspace, so it carries the workspace's
+ * name — an id alone tells the user nothing about where the agent ran.
+ */
+export interface RecentAgentSession extends AgentSession {
+  workspaceName: string;
 }
 
 /** The registry of external CLI coding agents. Changes only when the user
@@ -177,6 +193,34 @@ export function useAgentSessions(wsId: string | undefined) {
     queryFn: async () => {
       const res = await fetch(`/api/workspaces/${encodeURIComponent(wsId!)}/agent-sessions`);
       if (!res.ok) throw new Error("Failed to fetch agent sessions");
+      return res.json();
+    },
+  });
+}
+
+/**
+ * Sessions from EVERY workspace, for the homepage history list — the only
+ * place a session that ran overnight in some other workspace is discoverable
+ * at all, since `useAgentSessions` can only answer per workspace.
+ *
+ * Polls every 10s, set explicitly rather than inheriting the global 15s
+ * (`providers.tsx`): the homepage is where a "running" badge for a session
+ * that has since exited is most misleading, because there is no terminal on
+ * screen to contradict it.
+ *
+ * The server decides how many rows come back (20, capped at 100), so the key
+ * carries no page size and cannot go stale against one.
+ */
+export function useRecentAgentSessions() {
+  return useQuery<RecentAgentSession[]>({
+    queryKey: ["agent-sessions", "recent"],
+    refetchInterval: 10_000,
+    queryFn: async () => {
+      const res = await fetch("/api/agent-sessions/recent");
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || "Failed to fetch recent agent sessions");
+      }
       return res.json();
     },
   });

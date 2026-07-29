@@ -1,5 +1,5 @@
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     Json,
 };
 use serde::Deserialize;
@@ -291,14 +291,17 @@ struct AgentSessionRow {
     /// NULL for rows written before per-session working directories existed;
     /// those ran in their workspace's folder, which we cannot reconstruct.
     cwd: Option<String>,
-    status: String,
     exit_code: Option<i64>,
     created_at: String,
     last_activity_at: Option<String>,
     exited_at: Option<String>,
 }
 
-const SESSION_COLS: &str = "id, workspace_id, definition_id, title, cwd, status, exit_code, \
+/// No `status`: the stored column is never the answer the API gives (see
+/// `session_to_json`), so selecting it would only invite someone to trust it.
+/// The recent-sessions query still reads it in SQL — as an ordering proxy,
+/// which is the one thing it is good for.
+const SESSION_COLS: &str = "id, workspace_id, definition_id, title, cwd, exit_code, \
                             created_at, last_activity_at, exited_at";
 
 /// The table is the durable record, but a session that has just exited may not
@@ -310,6 +313,13 @@ const SESSION_COLS: &str = "id, workspace_id, definition_id, title, cwd, status,
 /// reports `exited` — after a server restart the PTY is gone for good, and
 /// reporting a dead session as `waiting` forever would be a lie the UI would
 /// draw an icon for.
+///
+/// `status` is overridden the same way, and for the same reason. A stored
+/// `running` with nothing in the registry is a row the exit task never got to
+/// finish writing (or one left by a process that died with the server); the
+/// PTY behind it is gone either way. Trusting the column would advertise a
+/// session the user can click into and find empty — and it is the clickable
+/// half of the homepage history list that decides on exactly this field.
 ///
 /// `hasTranscript` is what lets the UI tell "archived, readable" from "gone":
 /// an exited session with a transcript still opens and shows what it did, one
@@ -327,7 +337,7 @@ fn session_to_json(row: &AgentSessionRow, state: &AppState, has_transcript: bool
             )
         }
         None => (
-            row.status.clone(),
+            "exited".to_string(),
             row.exit_code,
             Activity::Exited.as_str().to_string(),
             None,
@@ -392,6 +402,111 @@ pub async fn list_agent_sessions(
     Ok(Json(json!(rows
         .iter()
         .map(|row| session_to_json(row, &state, transcripts.contains(&row.id)))
+        .collect::<Vec<_>>())))
+}
+
+// ---------------------------------------------------------------------------
+// Recent sessions, across every workspace
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+pub struct RecentSessionsQuery {
+    #[serde(default)]
+    pub limit: Option<i64>,
+}
+
+pub const RECENT_SESSIONS_DEFAULT_LIMIT: i64 = 20;
+/// A hard cap, so a client cannot ask for the entire history in one request.
+pub const RECENT_SESSIONS_MAX_LIMIT: i64 = 100;
+
+/// Clamps a client-supplied `limit` into a usable page size.
+///
+/// Absent means "the default". Zero or negative is not a smaller page, it is a
+/// slip that would return an empty list forever, so it falls back to the
+/// default rather than being honoured. Anything above the cap is clamped
+/// instead of rejected — an over-eager client should still get a usable page,
+/// not a 400 it cannot act on.
+pub fn clamp_recent_limit(limit: Option<i64>) -> i64 {
+    match limit {
+        Some(n) if n > 0 => n.min(RECENT_SESSIONS_MAX_LIMIT),
+        _ => RECENT_SESSIONS_DEFAULT_LIMIT,
+    }
+}
+
+/// `SESSION_COLS` qualified with a table alias, so the join below does not
+/// carry a second copy of the column list that could drift from the one the
+/// per-workspace handler selects.
+fn qualified_session_cols(alias: &str) -> String {
+    SESSION_COLS
+        .split(',')
+        .map(|col| format!("{alias}.{}", col.trim()))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+#[derive(sqlx::FromRow)]
+struct RecentAgentSessionRow {
+    #[sqlx(flatten)]
+    session: AgentSessionRow,
+    workspace_name: String,
+}
+
+/// Exactly what the per-workspace list reports, plus the workspace's name —
+/// from the homepage a session is meaningless without knowing where it ran.
+/// Built on top of `session_to_json` rather than beside it so status, activity
+/// and `hasTranscript` can only ever be derived one way.
+fn recent_session_to_json(
+    row: &RecentAgentSessionRow,
+    state: &AppState,
+    has_transcript: bool,
+) -> Value {
+    let mut value = session_to_json(&row.session, state, has_transcript);
+    if let Some(map) = value.as_object_mut() {
+        map.insert("workspaceName".to_string(), json!(row.workspace_name));
+    }
+    value
+}
+
+/// Every workspace's agent sessions, most interesting first.
+///
+/// An INNER JOIN on `workspaces` is deliberate: a session whose workspace has
+/// been deleted cannot be opened — `/w/:wsId/...` redirects home — so listing
+/// it would only offer a dead link.
+///
+/// Live rows sort ahead of the rest, then by recency. Recency alone would be
+/// the obvious ordering, but `last_activity_at` is only touched while output
+/// flows (see `agents::start_pty`), so an agent that has sat waiting on the
+/// user for an hour looks stale and would be the first thing `LIMIT` drops —
+/// exactly the row this list exists to surface. The ordering uses the stored
+/// status, which is only a proxy; the reported `status`/`activity` still come
+/// from the registry via `session_to_json`.
+pub async fn list_recent_agent_sessions(
+    Query(params): Query<RecentSessionsQuery>,
+    State(state): State<AppState>,
+) -> Result<Json<Value>> {
+    let cols = qualified_session_cols("s");
+    let rows: Vec<RecentAgentSessionRow> = sqlx::query_as(&format!(
+        "SELECT {cols}, w.name AS workspace_name
+         FROM agent_sessions s
+         JOIN workspaces w ON w.id = s.workspace_id
+         ORDER BY (s.status = 'running') DESC,
+                  COALESCE(s.last_activity_at, s.created_at) DESC,
+                  s.rowid DESC
+         LIMIT ?"
+    ))
+    .bind(clamp_recent_limit(params.limit))
+    .fetch_all(&state.db)
+    .await?;
+
+    // One directory read for the whole page, not one stat per row.
+    let transcripts = match state.agents.transcripts() {
+        Some(store) => store.list_ids().await,
+        None => std::collections::HashSet::new(),
+    };
+
+    Ok(Json(json!(rows
+        .iter()
+        .map(|row| recent_session_to_json(row, &state, transcripts.contains(&row.session.id)))
         .collect::<Vec<_>>())))
 }
 
@@ -633,6 +748,115 @@ mod tests {
         assert_eq!(
             validate_session_title("  Refactor the parser  "),
             Ok("Refactor the parser".to_string())
+        );
+    }
+
+    #[test]
+    fn an_absent_or_nonsensical_limit_falls_back_to_the_default() {
+        assert_eq!(clamp_recent_limit(None), RECENT_SESSIONS_DEFAULT_LIMIT);
+        assert_eq!(clamp_recent_limit(Some(0)), RECENT_SESSIONS_DEFAULT_LIMIT);
+        assert_eq!(clamp_recent_limit(Some(-5)), RECENT_SESSIONS_DEFAULT_LIMIT);
+    }
+
+    #[test]
+    fn an_oversized_limit_is_clamped_rather_than_rejected() {
+        assert_eq!(clamp_recent_limit(Some(5)), 5);
+        assert_eq!(clamp_recent_limit(Some(RECENT_SESSIONS_MAX_LIMIT)), RECENT_SESSIONS_MAX_LIMIT);
+        assert_eq!(clamp_recent_limit(Some(10_000)), RECENT_SESSIONS_MAX_LIMIT);
+    }
+
+    /// The recent-sessions join must select the same columns the per-workspace
+    /// list does, or `AgentSessionRow` would fail to build from the row.
+    #[test]
+    fn qualifying_the_column_list_prefixes_every_column_exactly_once() {
+        let qualified = qualified_session_cols("s");
+        assert_eq!(
+            qualified.split(", ").count(),
+            SESSION_COLS.split(',').count(),
+            "qualifying must not add or drop a column"
+        );
+        assert!(qualified.split(", ").all(|col| col.starts_with("s.")));
+        assert!(qualified.starts_with("s.id, s.workspace_id, "));
+        assert!(qualified.ends_with(", s.exited_at"));
+    }
+
+    #[tokio::test]
+    async fn recent_sessions_span_workspaces_and_carry_the_workspace_name() {
+        let db = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        crate::db::run_migrations(&db).await.unwrap();
+
+        for (id, name) in [("w1", "Alpha"), ("w2", "Beta")] {
+            sqlx::query("INSERT INTO workspaces (id, name) VALUES (?, ?)")
+                .bind(id)
+                .bind(name)
+                .execute(&db)
+                .await
+                .unwrap();
+        }
+        // A workspace that no longer exists — its session must not be listed.
+        for (id, ws, title, status, activity) in [
+            ("s-old", "w1", "Old run", "exited", "2026-07-01 10:00:00"),
+            ("s-new", "w2", "New run", "exited", "2026-07-28 10:00:00"),
+            ("s-idle", "w1", "Still going", "running", "2026-06-01 10:00:00"),
+            ("s-orphan", "gone", "Orphan", "exited", "2026-07-29 10:00:00"),
+        ] {
+            sqlx::query(
+                "INSERT INTO agent_sessions
+                 (id, workspace_id, title, status, created_at, last_activity_at)
+                 VALUES (?, ?, ?, ?, ?, ?)",
+            )
+            .bind(id)
+            .bind(ws)
+            .bind(title)
+            .bind(status)
+            .bind(activity)
+            .bind(activity)
+            .execute(&db)
+            .await
+            .unwrap();
+        }
+
+        let cols = qualified_session_cols("s");
+        let rows: Vec<RecentAgentSessionRow> = sqlx::query_as(&format!(
+            "SELECT {cols}, w.name AS workspace_name
+             FROM agent_sessions s
+             JOIN workspaces w ON w.id = s.workspace_id
+             ORDER BY (s.status = 'running') DESC,
+                      COALESCE(s.last_activity_at, s.created_at) DESC,
+                      s.rowid DESC
+             LIMIT ?"
+        ))
+        .bind(clamp_recent_limit(None))
+        .fetch_all(&db)
+        .await
+        .unwrap();
+
+        // The stored status is an ordering proxy only; it must not reach the
+        // struct the JSON is built from, or a stale `running` row would be
+        // advertised as a session the user can attach to.
+        assert!(
+            !SESSION_COLS.split(',').any(|col| col.trim() == "status"),
+            "the reported status comes from the registry, never the column"
+        );
+
+        let listed: Vec<(&str, &str)> = rows
+            .iter()
+            .map(|r| (r.session.id.as_str(), r.workspace_name.as_str()))
+            .collect();
+        assert_eq!(
+            listed,
+            vec![
+                // Live first even though it is the least recently active…
+                ("s-idle", "Alpha"),
+                // …then by recency, across workspaces.
+                ("s-new", "Beta"),
+                ("s-old", "Alpha"),
+            ],
+            "a session whose workspace is gone must not be listed"
         );
     }
 

@@ -1,6 +1,13 @@
 import { describe, it, expect } from "vitest";
-import type { AgentSession } from "@/hooks/use-agents";
-import { isHighConfidenceWaiting, newlyWaiting, waitingCount } from "./agent-activity";
+import type { AgentSession, RecentAgentSession } from "@/hooks/use-agents";
+import {
+  agentHistoryRowState,
+  isAgentHistoryRowOpenable,
+  isHighConfidenceWaiting,
+  newlyWaiting,
+  sortAgentHistory,
+  waitingCount,
+} from "./agent-activity";
 
 const session = (over: Partial<AgentSession> = {}): AgentSession => ({
   id: "s1",
@@ -96,5 +103,102 @@ describe("newlyWaiting", () => {
   it("handles undefined prev and next", () => {
     expect(newlyWaiting(undefined, undefined)).toEqual([]);
     expect(newlyWaiting(undefined, [session({ activity: "waiting", waitingConfidence: "high" })]).length).toBe(1);
+  });
+});
+
+const recent = (over: Partial<RecentAgentSession> = {}): RecentAgentSession => ({
+  ...session(),
+  workspaceName: "Alpha",
+  ...over,
+});
+
+describe("agentHistoryRowState", () => {
+  it("calls a running session live regardless of its transcript", () => {
+    expect(agentHistoryRowState(recent({ status: "running" }))).toBe("live");
+    expect(agentHistoryRowState(recent({ status: "running", hasTranscript: true }))).toBe("live");
+  });
+
+  it("calls an exited session with a transcript archived", () => {
+    expect(agentHistoryRowState(recent({ status: "exited", hasTranscript: true }))).toBe(
+      "archived"
+    );
+  });
+
+  it("calls an exited session without a transcript unavailable", () => {
+    expect(agentHistoryRowState(recent({ status: "exited", hasTranscript: false }))).toBe(
+      "unavailable"
+    );
+  });
+
+  it("treats a missing hasTranscript as unavailable, never as archived", () => {
+    // An older backend omits the field entirely; promising a transcript we
+    // cannot see would open an empty terminal, which reads as a bug.
+    expect(agentHistoryRowState(recent({ status: "exited" }))).toBe("unavailable");
+  });
+
+  it("only refuses to open the unavailable case", () => {
+    expect(isAgentHistoryRowOpenable(recent({ status: "running" }))).toBe(true);
+    expect(isAgentHistoryRowOpenable(recent({ status: "exited", hasTranscript: true }))).toBe(true);
+    expect(isAgentHistoryRowOpenable(recent({ status: "exited" }))).toBe(false);
+  });
+});
+
+describe("sortAgentHistory", () => {
+  it("puts running sessions ahead of exited ones even when far less recent", () => {
+    const sorted = sortAgentHistory([
+      recent({ id: "old-exit", status: "exited", lastActivityAt: "2026-07-29 12:00:00" }),
+      recent({ id: "stale-live", status: "running", lastActivityAt: "2026-06-01 09:00:00" }),
+    ]);
+    expect(sorted.map((s) => s.id)).toEqual(["stale-live", "old-exit"]);
+  });
+
+  it("orders within each group by recency, newest first", () => {
+    const sorted = sortAgentHistory([
+      recent({ id: "e-old", status: "exited", lastActivityAt: "2026-07-01 10:00:00" }),
+      recent({ id: "r-old", status: "running", lastActivityAt: "2026-07-02 10:00:00" }),
+      recent({ id: "e-new", status: "exited", lastActivityAt: "2026-07-28 10:00:00" }),
+      recent({ id: "r-new", status: "running", lastActivityAt: "2026-07-03 10:00:00" }),
+    ]);
+    expect(sorted.map((s) => s.id)).toEqual(["r-new", "r-old", "e-new", "e-old"]);
+  });
+
+  it("falls back to createdAt when a session has never reported activity", () => {
+    const sorted = sortAgentHistory([
+      recent({
+        id: "no-activity",
+        status: "exited",
+        createdAt: "2026-07-29 10:00:00",
+        lastActivityAt: null,
+      }),
+      recent({
+        id: "older",
+        status: "exited",
+        createdAt: "2026-07-01 10:00:00",
+        lastActivityAt: "2026-07-02 10:00:00",
+      }),
+    ]);
+    expect(sorted.map((s) => s.id)).toEqual(["no-activity", "older"]);
+  });
+
+  it("keeps the server's order for rows that tie", () => {
+    const at = "2026-07-29 10:00:00";
+    const sorted = sortAgentHistory([
+      recent({ id: "first", status: "exited", lastActivityAt: at }),
+      recent({ id: "second", status: "exited", lastActivityAt: at }),
+    ]);
+    expect(sorted.map((s) => s.id)).toEqual(["first", "second"]);
+  });
+
+  it("does not mutate its input", () => {
+    const input = [
+      recent({ id: "a", status: "exited", lastActivityAt: "2026-07-01 10:00:00" }),
+      recent({ id: "b", status: "running", lastActivityAt: "2026-06-01 10:00:00" }),
+    ];
+    sortAgentHistory(input);
+    expect(input.map((s) => s.id)).toEqual(["a", "b"]);
+  });
+
+  it("handles undefined", () => {
+    expect(sortAgentHistory(undefined)).toEqual([]);
   });
 });

@@ -132,6 +132,11 @@ pub fn build_router(state: AppState) -> Router {
         // Agent sessions (live PTYs, outliving the socket that started them)
         .route("/api/workspaces/:ws_id/agent-sessions",
             get(agents::list_agent_sessions).post(agents::create_agent_session))
+        // MUST stay above `/api/agent-sessions/:id` — a literal segment
+        // registered after the pattern is captured by it, and "recent" would
+        // be looked up as a session id.
+        .route("/api/agent-sessions/recent",
+            get(agents::list_recent_agent_sessions))
         .route("/api/agent-sessions/:id",
             put(agents::rename_agent_session)
             .delete(agents::delete_agent_session))
