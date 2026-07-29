@@ -9,7 +9,7 @@ import { ActivityBar, availableViews } from "@/components/activity-bar";
 import { SidebarExplorer } from "@/components/sidebar-explorer";
 import { SidebarSearch } from "@/components/sidebar-search";
 import { SidebarCluster } from "@/components/sidebar-cluster";
-import { SidebarTerminals } from "@/components/sidebar-terminals";
+import { SidebarAgents } from "@/components/sidebar-agents";
 import { Button } from "@/components/ui/button";
 
 /**
@@ -110,7 +110,9 @@ export function Sidebar({ workspace, contextName, onNavigate, forceExpanded }: {
                 onNavigate={onNavigate}
               />
             )}
-            {activeView === "terminals" && <SidebarTerminals />}
+            {activeView === "terminals" && (
+              <SidebarAgents workspace={workspace} wsId={wsId} />
+            )}
           </div>
         </aside>
       )}
