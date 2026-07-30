@@ -37,7 +37,7 @@ cargo test -p backend --lib   # Rust backend tests
 
 There is no `db:push`, `db:migrate`, or `db:studio` — those were Prisma-era scripts and no longer exist.
 
-`npm test` runs 125 vitest tests; `cargo test -p backend --lib` runs 69 Rust tests.
+`npm test` runs 345 vitest tests; `cargo test -p backend --lib` runs 197 Rust tests.
 
 ## Project Structure
 
@@ -74,6 +74,18 @@ Routes are `/w/:wsId/clusters/:contextName/...` (see `src/App.tsx`). A legacy `/
 - **Namespace state lives only in `namespaceByWorkspace`** in `ui-store` (`src/lib/stores/ui-store.ts`). There is deliberately no `last_namespace` column on `workspaces` — one source of truth.
 - **Zustand persist migrations are shape-driven, not version-driven.** zustand's `migrate` only runs when the persisted payload already has a numeric `version` that differs from the current one, and only rewrites storage if migration actually ran — a payload lacking `version` would never trigger `migrate` and would persist in its old shape forever. Both `tab-store` (`src/lib/stores/tab-store.ts`, v1) and `ui-store` (v3) detect the old shape directly instead of relying on the `version` field.
 
+## Agents
+
+External CLI coding agents (Claude Code, Codex, Aider, or a user-added command) run as PTY-backed sessions supervised by the backend, not by the client.
+
+- **A session outlives its WebSocket.** `backend/src/agents/mod.rs` owns a registry of live sessions keyed by id, independent of any attached socket — closing the browser tab does not stop the agent, and `GET /ws/agent/:session_id` (registered in `backend/src/routes/mod.rs`) replays a bounded scrollback on attach so reconnecting shows what was missed.
+- **One xterm instance per session.** `AgentTerminal` keys its `TerminalComponent` on `sessionId`; `TerminalInner` otherwise reuses one xterm across `wsUrl` changes (right for the cluster shell, wrong here, since attaching replays scrollback). Its socket cleanup also detaches `onopen`/`onmessage`/`onerror`/`onclose` before calling `close()` — `close()` is async, so a superseded socket's late events used to write into whichever session the user had just switched to.
+- **A tab is never repurposed into an agent tab or out of one** — same `syncTabToLocation` rule as file/cluster tabs; `src/lib/tab-route.ts` knows the `agents/:sessionId` shape.
+- **Sessions can be seeded.** `POST /api/workspaces/:ws_id/agent-sessions` accepts optional `title`, `cwd` (defaults to the workspace folder; a session is not confined to it), `initialPrompt`, and `attachments`. Attachments are written to files under the app-data dir, never pasted into the PTY or into the user's repo. The prompt is sent once the session's `activity` reaches `"waiting"` (see below) with a timeout, and `seed_status` (`none`/`pending`/`sent`/`timed_out`/`failed`) records what actually happened.
+- **`activity` is a heuristic, not a fact.** `"working"` vs `"waiting"` is inferred from output recency (quiet after producing output ⇒ probably waiting on you); `waitingConfidence: "high"` means a configured prompt-pattern regex actually matched the scrollback tail, `"low"` means it's just quiet — copy in the UI stays hedged except at high confidence.
+- **File paths in agent output are clickable** (`src/lib/file-link.ts`), resolved against the session's `cwd` — not the workspace folder, since they can differ — and only linked when the resolved path is inside the workspace folder, since that is what the confined filesystem API can actually open.
+- **MCP servers** are edited via the workspace's `.mcp.json` through the existing confined file API (`src/lib/mcp-config.ts`) — no separate backend endpoint. Round-tripping preserves every field this build does not model; user-level (`~/.claude.json`) servers are out of the confined folder and are not shown.
+
 ## Database Tables (`backend/src/db.rs`)
 
 - `organizations` — grouping for cluster contexts
@@ -85,6 +97,8 @@ Routes are `/w/:wsId/clusters/:contextName/...` (see `src/App.tsx`). A legacy `/
 - `port_forward_sessions` — port-forward process tracking, stale sessions marked stopped on startup
 - `workspaces` — id, name, optional `folder_path`, `sort_order`, `last_opened_at`. Its `context_name` column is LEGACY: `workspace_clusters` is authoritative, and the column is only rewritten to the first bound cluster so an older build sharing the database still finds one sane cluster. `folderExists` is derived at read time, not stored here.
 - `workspace_clusters` — `(workspace_id, context_name)` primary key plus `sort_order`; the many-clusters-per-workspace bindings. `exists` is derived per request from one kubeconfig read, never stored.
+- `agent_definitions` — reusable agent commands (name, command, args, env, `prompt_patterns` for high-confidence waiting detection). Seeded once with built-ins (Claude Code, Codex, Aider, Hermes) via a versioned marker in `user_preferences`, so a user-deleted built-in does not come back, and a later-added built-in still reaches existing installs.
+- `agent_sessions` — one row per PTY session: workspace, definition, `cwd`, `status`/`exit_code`, `seed_status`, transcript/attachment bookkeeping. The live process and its scrollback ring buffer live only in `backend/src/agents/mod.rs`'s in-memory registry; a restart marks any still-`running` row `exited` and any still-`pending` `seed_status` `failed`, mirroring how `port_forward_sessions` handles stale rows. Transcripts are additionally persisted to disk so a session started before the app restarted can still be read back.
 
 There is no migration versioning — adding a table is a new `CREATE TABLE IF NOT EXISTS` in `run_migrations()`, but adding a *column* to an existing table later needs a hand-written `ALTER TABLE` guarded by a `PRAGMA table_info` check (the blind `CREATE TABLE IF NOT EXISTS` won't add columns to an already-existing table).
 
