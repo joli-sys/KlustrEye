@@ -16,7 +16,7 @@
   <img src="public/screenshot_pod.png" alt="KlustrEye">
 </p>
 
-A native desktop IDE built with Tauri, React, and Rust — for Kubernetes clusters, the code that deploys to them, and the AI coding agents that work on both. A **workspace** binds an optional local folder and any number of clusters, so a repo and the environments it ships to live in one place instead of three separate tools.
+A native desktop DevOps platform built with Tauri, React, and Rust — Kubernetes cluster operations, a real code editor, and supervised AI coding agents in one app. A **workspace** binds a local folder and any number of clusters, so diagnosing a broken pod, editing the Terraform or Helm chart that caused it, and handing the fix to an agent all happen without leaving the window.
 
 ## Features
 
