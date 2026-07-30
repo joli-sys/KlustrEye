@@ -1,229 +1,173 @@
-
-
-import { Link } from "react-router-dom";
-import { useLocation, useNavigate } from "react-router-dom";
+import { useEffect, useRef } from "react";
+import { PanelLeftClose } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { useUIStore } from "@/lib/stores/ui-store";
+import { useUIStore, type ActivityView } from "@/lib/stores/ui-store";
 import { useTabStore } from "@/lib/stores/tab-store";
-import { useSavedSearches } from "@/lib/stores/saved-searches-store";
-import { SIDEBAR_SECTIONS, RESOURCE_ROUTE_MAP, RESOURCE_REGISTRY, type ResourceKind } from "@/lib/constants";
-import { KlustrEyeLogo } from "@/components/klustreye-logo";
-import { ClusterSwitcher } from "@/components/cluster-switcher";
-import { Badge } from "@/components/ui/badge";
-import {
-  LayoutDashboard, Server, Box, Layers, Database, Cpu, Copy, Play, Clock,
-  Network, Globe, FileText, KeyRound, UserCog, HardDrive, Activity, Anchor,
-  Puzzle, Cable, Share2, ShieldCheck, ArrowUpDown, SlidersHorizontal,
-  PanelLeftClose, PanelLeft, Settings, BarChart3, Star, X,
-  Shield, UserCheck, UsersRound, CircleDollarSign,
-} from "lucide-react";
+import { clusterPath } from "@/lib/paths";
+import { useWorkspaceId } from "@/hooks/use-cluster-path";
+import type { Workspace } from "@/hooks/use-workspaces";
+import { useAgentSessions, type AgentSession } from "@/hooks/use-agents";
+import { newlyWaiting, waitingCount } from "@/lib/agent-activity";
+import { activeClusterName } from "@/lib/workspace-clusters";
+import { ActivityBar, availableViews } from "@/components/activity-bar";
+import { SidebarExplorer } from "@/components/sidebar-explorer";
+import { SidebarSearch } from "@/components/sidebar-search";
+import { SidebarCluster } from "@/components/sidebar-cluster";
+import { SidebarAgents } from "@/components/sidebar-agents";
 import { Button } from "@/components/ui/button";
-import { getPluginsWithPages } from "@/lib/plugins/registry";
+import { useToast } from "@/components/ui/toast";
 
-const iconMap: Record<string, React.ComponentType<{ className?: string }>> = {
-  LayoutDashboard, Server, Box, Layers, Database, Cpu, Copy, Play, Clock,
-  Network, Globe, FileText, KeyRound, UserCog, HardDrive, Activity, Anchor,
-  Puzzle, Cable, Share2, ShieldCheck, ArrowUpDown, SlidersHorizontal, Settings, BarChart3,
-  Shield, UserCheck, UsersRound, CircleDollarSign,
-};
+/**
+ * Whether `sessionId`'s tab is both the active tab for this workspace AND
+ * the window actually has focus — the "open and focused" condition for
+ * suppressing a needs-input notification. A backgrounded/minimized window
+ * still has an "active" tab in the store, but the user isn't looking at it.
+ */
+function isSessionTabFocused(wsId: string, sessionId: string): boolean {
+  if (typeof document !== "undefined" && !document.hasFocus()) return false;
+  const state = useTabStore.getState();
+  const activeId = state.activeTabIdByWorkspace[wsId];
+  const activeTab = (state.tabsByWorkspace[wsId] || []).find((t) => t.id === activeId);
+  return !!activeTab && activeTab.kind === "agent" && activeTab.payload?.sessionId === sessionId;
+}
 
-const pagePlugins = getPluginsWithPages();
+/**
+ * VS Code-style side panel: an always-visible icon rail plus exactly one view.
+ *
+ * `contextName` is optional and is the ROUTE's cluster: a folder-only
+ * workspace is a supported binding, and the sidebar is mounted by
+ * WorkspaceLayout on routes that have no `:contextName` param at all, where
+ * the workspace's first bound cluster stands in. Everything cluster-scoped
+ * lives behind the Cluster rail icon, which simply is not there until the
+ * workspace binds at least one cluster.
+ *
+ * Collapsing hides the PANEL, never the rail — the rail is how it reopens.
+ */
+export function Sidebar({ workspace, contextName, onNavigate, forceExpanded }: { workspace: Workspace; contextName?: string; onNavigate?: () => void; forceExpanded?: boolean }) {
+  const { sidebarOpen: _sidebarOpen, setSidebarOpen, activityView, setActivityView } = useUIStore();
+  const panelOpen = forceExpanded ?? _sidebarOpen;
+  const wsId = useWorkspaceId();
+  // Route first, first binding second — see activeClusterName.
+  const effectiveContext = activeClusterName(workspace.clusters, contextName);
+  const basePath = effectiveContext ? clusterPath(wsId, effectiveContext, "") : null;
 
-export function Sidebar({ contextName, onNavigate, forceExpanded }: { contextName: string; onNavigate?: () => void; forceExpanded?: boolean }) {
-  const pathname = useLocation().pathname;
-  const navigate = useNavigate();
-  const { sidebarOpen: _sidebarOpen, toggleSidebar, setClusterNamespace } = useUIStore();
-  const sidebarOpen = forceExpanded ?? _sidebarOpen;
-  const { openTab } = useTabStore();
-  const { searches: savedSearches, removeSearch } = useSavedSearches();
-  const basePath = `/clusters/${encodeURIComponent(contextName)}`;
+  // Sidebar is mounted for the whole workspace (see file comment), so this is
+  // the one place that can badge the rail and notify regardless of which
+  // view is currently open — SidebarAgents only exists while its own panel
+  // is showing. React Query dedupes this against SidebarAgents' own
+  // useAgentSessions(wsId) call, so it isn't a second network subscription.
+  const { data: agentSessions } = useAgentSessions(wsId);
+  const { addToast } = useToast();
+  const prevAgentSessionsRef = useRef<AgentSession[] | undefined>(undefined);
+  const agentSessionsSeededRef = useRef(false);
+
+  useEffect(() => {
+    if (!agentSessions) return;
+    if (!agentSessionsSeededRef.current) {
+      // First poll after mount: seed only. A session that was already
+      // waiting/high before this page opened isn't a NEW event — nothing to
+      // notify about yet, and firing here would toast on every page load.
+      agentSessionsSeededRef.current = true;
+      prevAgentSessionsRef.current = agentSessions;
+      return;
+    }
+    const transitioned = newlyWaiting(prevAgentSessionsRef.current, agentSessions);
+    for (const session of transitioned) {
+      if (isSessionTabFocused(wsId, session.id)) continue;
+      addToast({
+        title: `${session.title} needs input`,
+        description: "This agent looks like it's waiting on you.",
+        variant: "info",
+      });
+    }
+    prevAgentSessionsRef.current = agentSessions;
+  }, [agentSessions, wsId, addToast]);
+
+  const views = availableViews({
+    hasFolder: !!workspace.folderPath,
+    // One binding is enough for the Cluster rail icon; which one is active is
+    // the view's own business, and a broken one still deserves to be listed.
+    hasCluster: workspace.clusters.length > 0 && !!basePath,
+  });
+
+  /**
+   * Derived, not written back to the store: if the folder binding goes away
+   * the persisted "explorer" preference is simply ignored for now, and comes
+   * back on its own once the folder is rebound. Writing a fallback into the
+   * store would silently destroy the user's choice.
+   */
+  const activeView: ActivityView =
+    views.some((v) => v.id === activityView) ? activityView : views[0].id;
+
+  const activeLabel = views.find((v) => v.id === activeView)?.label ?? "";
+
+  const handleSelect = (view: ActivityView) => {
+    if (view === activeView && panelOpen) {
+      // Clicking the view you are already looking at collapses the panel —
+      // except in the mobile drawer, where a collapsed panel leaves nothing
+      // but a rail floating over the backdrop.
+      if (!forceExpanded) setSidebarOpen(false);
+      return;
+    }
+    setActivityView(view);
+    setSidebarOpen(true);
+  };
 
   return (
-    <aside
-      className={cn(
-        "flex flex-col h-full border-r bg-card transition-all duration-200 shrink-0",
-        sidebarOpen ? "w-56" : "w-14"
+    <div className="flex h-full shrink-0">
+      <ActivityBar
+        views={views}
+        activeView={activeView}
+        panelOpen={panelOpen}
+        onSelect={handleSelect}
+        badgeCounts={{ terminals: waitingCount(agentSessions) }}
+      />
+
+      {panelOpen && (
+        <aside className="flex flex-col h-full w-56 shrink-0 border-r bg-card">
+          <div className="flex items-center justify-between gap-2 h-11 shrink-0 border-b pl-3 pr-1">
+            <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider truncate">
+              {activeLabel}
+            </span>
+            {!forceExpanded && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="shrink-0 h-7 w-7"
+                onClick={() => setSidebarOpen(false)}
+                title="Collapse panel"
+              >
+                <PanelLeftClose className="h-4 w-4" />
+              </Button>
+            )}
+          </div>
+
+          <div
+            className={cn(
+              "flex-1 min-h-0",
+              // The cluster view manages its own scrolling so its settings
+              // footer can stay pinned; the rest just scroll as one column.
+              activeView === "cluster" ? "overflow-hidden" : "overflow-y-auto py-2"
+            )}
+          >
+            {activeView === "explorer" && <SidebarExplorer workspace={workspace} />}
+            {activeView === "search" && (
+              <SidebarSearch workspace={workspace} wsId={wsId} />
+            )}
+            {activeView === "cluster" && basePath && effectiveContext && (
+              <SidebarCluster
+                workspace={workspace}
+                contextName={effectiveContext}
+                basePath={basePath}
+                onNavigate={onNavigate}
+              />
+            )}
+            {activeView === "terminals" && (
+              <SidebarAgents workspace={workspace} wsId={wsId} />
+            )}
+          </div>
+        </aside>
       )}
-    >
-      <div className="flex items-center justify-center border-b py-2 px-3 relative">
-        {sidebarOpen && (
-          <Link to="/" className="overflow-hidden">
-            <KlustrEyeLogo size="sm" />
-          </Link>
-        )}
-        <Button variant="ghost" size="icon" onClick={toggleSidebar} className={cn("shrink-0", sidebarOpen ? "absolute right-2" : "")}>
-          {sidebarOpen ? <PanelLeftClose className="h-4 w-4" /> : <PanelLeft className="h-4 w-4" />}
-        </Button>
-      </div>
-
-      <div className="border-b">
-        <ClusterSwitcher contextName={contextName} sidebarOpen={sidebarOpen} />
-      </div>
-
-      <nav className="flex-1 overflow-y-auto py-2">
-        {SIDEBAR_SECTIONS.map((section, i) => (
-          <div key={i} className="mb-2">
-            {sidebarOpen && (
-              <div className="px-3 py-1 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                {section.title}
-              </div>
-            )}
-            {section.items.map((item) => {
-              const Icon = iconMap[item.icon] || Box;
-              const href = `${basePath}/${item.href}`;
-              const isActive = pathname === href || pathname.startsWith(href + "/");
-
-              return (
-                <Link
-                  key={item.href}
-                  to={href}
-                  onClick={(e) => {
-                    if (e.ctrlKey || e.metaKey || e.button === 1) {
-                      e.preventDefault();
-                      openTab(contextName, href, item.label);
-                    } else {
-                      onNavigate?.();
-                    }
-                  }}
-                  onAuxClick={(e) => {
-                    if (e.button === 1) {
-                      e.preventDefault();
-                      openTab(contextName, href, item.label);
-                    }
-                  }}
-                  className={cn(
-                    "flex items-center gap-3 px-3 py-1.5 mx-1 rounded-md text-sm transition-colors",
-                    isActive
-                      ? "bg-primary/10 text-primary font-medium"
-                      : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
-                  )}
-                  title={!sidebarOpen ? item.label : undefined}
-                >
-                  <Icon className="h-4 w-4 shrink-0" />
-                  {sidebarOpen && <span className="truncate">{item.label}</span>}
-                </Link>
-              );
-            })}
-          </div>
-        ))}
-        {pagePlugins.length > 0 && (
-          <div className="mb-2">
-            {sidebarOpen && (
-              <div className="px-3 py-1 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                Integrations
-              </div>
-            )}
-            {pagePlugins.map((plugin) => {
-              const Icon = iconMap[plugin.manifest.icon] || Puzzle;
-              const href = `${basePath}/plugins/${plugin.manifest.id}`;
-              const isActive = pathname === href || pathname.startsWith(href + "/");
-
-              return (
-                <Link
-                  key={plugin.manifest.id}
-                  to={href}
-                  onClick={(e) => {
-                    if (e.ctrlKey || e.metaKey || e.button === 1) {
-                      e.preventDefault();
-                      openTab(contextName, href, plugin.manifest.name);
-                    } else {
-                      onNavigate?.();
-                    }
-                  }}
-                  onAuxClick={(e) => {
-                    if (e.button === 1) {
-                      e.preventDefault();
-                      openTab(contextName, href, plugin.manifest.name);
-                    }
-                  }}
-                  className={cn(
-                    "flex items-center gap-3 px-3 py-1.5 mx-1 rounded-md text-sm transition-colors",
-                    isActive
-                      ? "bg-primary/10 text-primary font-medium"
-                      : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
-                  )}
-                  title={!sidebarOpen ? plugin.manifest.name : undefined}
-                >
-                  <Icon className="h-4 w-4 shrink-0" />
-                  {sidebarOpen && <span className="truncate">{plugin.manifest.name}</span>}
-                </Link>
-              );
-            })}
-          </div>
-        )}
-        {savedSearches.length > 0 && (
-          <div className="mb-2 border-t pt-2">
-            {sidebarOpen && (
-              <div className="px-3 py-1 text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
-                <Star className="h-3 w-3" />
-                Saved Searches
-              </div>
-            )}
-            {savedSearches.map((s) => {
-              const route = RESOURCE_ROUTE_MAP[s.kind];
-              const path = route?.path ?? s.kind;
-              const href = `${basePath}/${path}?filter=${encodeURIComponent(s.query)}`;
-              const registry = RESOURCE_REGISTRY[s.kind as ResourceKind];
-              const kindLabel = registry?.kind ?? s.kind;
-              const tooltip = [
-                s.name,
-                `Kind: ${kindLabel}`,
-                `Filter: ${s.query}`,
-                s.namespace ? `Namespace: ${s.namespace}` : null,
-              ].filter(Boolean).join("\n");
-
-              return (
-                <div
-                  key={s.id}
-                  className="group flex items-center gap-1 mx-1 rounded-md text-sm text-muted-foreground hover:bg-accent/50 hover:text-foreground transition-colors cursor-pointer"
-                  title={tooltip}
-                  onClick={() => {
-                    if (s.namespace) setClusterNamespace(contextName, s.namespace);
-                    navigate(href);
-                    onNavigate?.();
-                  }}
-                >
-                  <div className="flex items-center gap-3 px-3 py-1.5 min-w-0 flex-1">
-                    <Star className="h-4 w-4 shrink-0 text-yellow-500" />
-                    {sidebarOpen && (
-                      <>
-                        <span className="truncate flex-1">{s.name}</span>
-                        <Badge variant="secondary" className="text-[10px] shrink-0">{kindLabel}</Badge>
-                      </>
-                    )}
-                  </div>
-                  {sidebarOpen && (
-                    <button
-                      className="opacity-0 group-hover:opacity-100 p-1 mr-1 rounded hover:bg-accent transition-opacity"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        removeSearch(s.id);
-                      }}
-                      title="Remove favorite"
-                    >
-                      <X className="h-3 w-3" />
-                    </button>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </nav>
-
-      <div className="border-t p-2">
-        <Link
-          to={`${basePath}/settings`}
-          onClick={() => onNavigate?.()}
-          className={cn(
-            "flex items-center gap-3 px-3 py-1.5 mx-1 rounded-md text-sm text-muted-foreground hover:bg-accent/50 hover:text-foreground transition-colors",
-            pathname.includes("/settings") && "bg-primary/10 text-primary font-medium"
-          )}
-        >
-          <Settings className="h-4 w-4 shrink-0" />
-          {sidebarOpen && <span>Settings</span>}
-        </Link>
-      </div>
-    </aside>
+    </div>
   );
 }

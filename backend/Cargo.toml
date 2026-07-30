@@ -1,6 +1,6 @@
 [package]
 name = "backend"
-version = "0.5.0"
+version = "0.7.0-rc.2"
 edition = "2021"
 rust-version = "1.77.2"
 
@@ -44,11 +44,22 @@ base64 = "0.22"
 flate2 = "1"
 tempfile = "3"
 dirs = "6"
+notify = "6"
+ignore = "0.4"
 
 portable-pty = "0.8"
+# Agent prompt detection: a definition may carry regexes that mean "this agent
+# is asking the user something". Compiled once per pattern set, never per poll.
+regex = "1"
 urlencoding = "2"
 http = "1"
 rust-embed = "8"
 mime_guess = "2"
 reqwest = { version = "0.12", features = ["json", "rustls-tls", "stream"], default-features = false }
 async-stream = "0.3"
+
+# Only for killpg(2): an agent session must terminate its whole process group,
+# and portable-pty's own killer signals the pid alone, orphaning the children
+# the agent spawned. Already in the lock file as a transitive dependency.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"

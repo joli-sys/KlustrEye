@@ -2,7 +2,8 @@ import { useMemo, useState } from "react";
 import { useClusterInfo } from "@/hooks/use-clusters";
 import { useResources } from "@/hooks/use-resources";
 import { useNodeMetrics, useClusterHealth, type ClusterHealthIssue } from "@/hooks/use-metrics";
-import { useClusterNamespace } from "@/hooks/use-cluster-namespace";
+import { useWorkspaceNamespace } from "@/hooks/use-cluster-namespace";
+import { useWorkspaceId, useClusterPath } from "@/hooks/use-cluster-path";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -169,11 +170,13 @@ function HealthIssuesCard({
   warningCount: number;
 }) {
   const total = criticalCount + warningCount;
+  const wsId = useWorkspaceId();
+  const path = useClusterPath();
 
   const issueHref = (issue: ClusterHealthIssue) => {
     const plural = SINGULAR_TO_PLURAL[issue.kind];
-    if (!plural) return `/clusters/${encodeURIComponent(contextName)}/events`;
-    return getResourceHref(contextName, plural, issue.name, issue.namespace);
+    if (!plural) return path("events");
+    return getResourceHref(wsId, contextName, plural, issue.name, issue.namespace);
   };
 
   if (total === 0) {
@@ -232,7 +235,7 @@ function HealthIssuesCard({
           </Link>
         ))}
         {issues.length > 8 && (
-          <Link to={`/clusters/${encodeURIComponent(contextName)}/events`} className="text-xs text-primary hover:underline">
+          <Link to={path("events")} className="text-xs text-primary hover:underline">
             View {issues.length - 8} more related warning events
           </Link>
         )}
@@ -244,8 +247,10 @@ function HealthIssuesCard({
 export default function OverviewPage() {
   const { contextName = "" } = useParams();
   const ctx = decodeURIComponent(contextName);
+  const wsId = useWorkspaceId();
+  const path = useClusterPath();
   const { data: clusterInfo, isLoading: infoLoading } = useClusterInfo(ctx);
-  const selectedNamespace = useClusterNamespace(ctx);
+  const selectedNamespace = useWorkspaceNamespace(wsId);
   const ns = selectedNamespace === "__all__" ? undefined : selectedNamespace;
 
   const [eventsExpanded, setEventsExpanded] = useState(true);
@@ -322,10 +327,10 @@ export default function OverviewPage() {
   }, [metricsData, nodes]);
 
   const stats = [
-    { label: "Nodes", value: (nodes || []).length, icon: Server, color: "text-blue-400", href: `/clusters/${encodeURIComponent(ctx)}/nodes` },
-    { label: "Pods", value: `${runningPods}/${totalPods}`, icon: Box, color: "text-green-400", href: `/clusters/${encodeURIComponent(ctx)}/workloads/pods` },
-    { label: "Deployments", value: `${readyDeploys}/${(deployments || []).length}`, icon: Layers, color: "text-purple-400", href: `/clusters/${encodeURIComponent(ctx)}/workloads/deployments` },
-    { label: "Services", value: (services || []).length, icon: Network, color: "text-orange-400", href: `/clusters/${encodeURIComponent(ctx)}/network/services` },
+    { label: "Nodes", value: (nodes || []).length, icon: Server, color: "text-blue-400", href: path("nodes") },
+    { label: "Pods", value: `${runningPods}/${totalPods}`, icon: Box, color: "text-green-400", href: path("workloads/pods") },
+    { label: "Deployments", value: `${readyDeploys}/${(deployments || []).length}`, icon: Layers, color: "text-purple-400", href: path("workloads/deployments") },
+    { label: "Services", value: (services || []).length, icon: Network, color: "text-orange-400", href: path("network/services") },
   ];
 
   return (
@@ -406,7 +411,7 @@ export default function OverviewPage() {
                 </Badge>
               </button>
               <Link
-                to={`/clusters/${encodeURIComponent(ctx)}/events`}
+                to={path("events")}
                 className="text-xs text-primary hover:underline"
               >
                 View all
@@ -425,7 +430,7 @@ export default function OverviewPage() {
                     const objName = involvedObj?.name as string || "";
                     const objNs = involvedObj?.namespace as string | undefined;
                     const pluralKind = SINGULAR_TO_PLURAL[objKind];
-                    const objHref = pluralKind ? getResourceHref(ctx, pluralKind, objName, objNs) : null;
+                    const objHref = pluralKind ? getResourceHref(wsId, ctx, pluralKind, objName, objNs) : null;
                     const timestamp = (event.lastTimestamp as string) || (meta?.creationTimestamp as string) || "";
                     const isWarning = eventType === "Warning";
                     return (
@@ -486,7 +491,7 @@ export default function OverviewPage() {
                       <Server className="h-4 w-4 text-muted-foreground shrink-0" />
                       <div className="min-w-0">
                         <Link
-                          to={`/clusters/${encodeURIComponent(ctx)}/nodes/${encodeURIComponent(nodeName)}`}
+                          to={path(`nodes/${encodeURIComponent(nodeName)}`)}
                           className="font-medium text-sm truncate text-primary hover:underline block"
                         >
                           {nodeName}

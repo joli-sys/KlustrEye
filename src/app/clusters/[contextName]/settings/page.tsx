@@ -8,6 +8,8 @@ import { Select } from "@/components/ui/select";
 import { useToast } from "@/components/ui/toast";
 import { useClusters, useNamespaces } from "@/hooks/use-clusters";
 import { useOrganizations, useAssignClusterOrganization } from "@/hooks/use-organizations";
+import { useWorkspaceId, useClusterPath } from "@/hooks/use-cluster-path";
+import { useWorkspaceNamespace } from "@/hooks/use-cluster-namespace";
 import { useUIStore } from "@/lib/stores/ui-store";
 import { getPlugins } from "@/lib/plugins/registry";
 import { COLOR_PRESETS, DEFAULT_COLOR_SCHEME } from "@/lib/color-presets";
@@ -20,13 +22,15 @@ export default function SettingsPage() {
   const { contextName = "" } = useParams();
   const ctx = decodeURIComponent(contextName);
   const { addToast } = useToast();
+  const wsId = useWorkspaceId();
+  const path = useClusterPath();
 
   const queryClient = useQueryClient();
   const { data: clusters } = useClusters();
   const currentCluster = clusters?.find((c) => c.name === ctx);
   const { data: namespaces } = useNamespaces(ctx);
-  const setClusterNamespace = useUIStore((s) => s.setClusterNamespace);
-  const currentNs = useUIStore((s) => s.namespaceByCluster[ctx]) ?? currentCluster?.lastNamespace ?? "default";
+  const setWorkspaceNamespace = useUIStore((s) => s.setWorkspaceNamespace);
+  const currentNs = useWorkspaceNamespace(wsId) ?? currentCluster?.lastNamespace ?? "default";
   const [savingNs, setSavingNs] = useState(false);
   const [selectedColor, setSelectedColor] = useState<string | null>(null);
   const [savingColor, setSavingColor] = useState(false);
@@ -82,7 +86,7 @@ export default function SettingsPage() {
   const handleSaveNamespace = async (value: string) => {
     setSavingNs(true);
     try {
-      setClusterNamespace(ctx, value);
+      setWorkspaceNamespace(wsId, value);
       const res = await fetch(
         `/api/clusters/${encodeURIComponent(ctx)}/settings/namespace`,
         {
@@ -127,7 +131,7 @@ export default function SettingsPage() {
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">Settings</h1>
         <Link
-          to={`/clusters/${encodeURIComponent(ctx)}/settings/ai`}
+          to={path("settings/ai")}
           className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors border rounded-md px-3 py-1.5 hover:bg-accent/50"
         >
           <Bot className="h-4 w-4" />

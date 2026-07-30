@@ -1,5 +1,6 @@
 import { useRef, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
+import { useClusterPath } from "@/hooks/use-cluster-path";
 import { useAiStore } from "@/lib/stores/ai-store";
 import { useUIStore } from "@/lib/stores/ui-store";
 import { useAiStatus, useChatStream } from "@/hooks/use-ai";
@@ -38,6 +39,7 @@ export function AiChatPanel({ context }: AiChatPanelProps) {
   const [input, setInput] = useState("");
   const [showHistory, setShowHistory] = useState(false);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
+  const clusterHref = useClusterPath();
 
   useEffect(() => {
     const el = messagesContainerRef.current;
@@ -157,7 +159,7 @@ export function AiChatPanel({ context }: AiChatPanelProps) {
             <p className="text-xs">Set up an AI provider to start chatting.</p>
           </div>
           <Link
-            to="/settings/ai"
+            to={clusterHref("settings/ai")}
             className="text-primary underline underline-offset-2 text-xs"
             onClick={() => setAiPanelOpen(false)}
           >

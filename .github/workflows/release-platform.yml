@@ -17,6 +17,11 @@ jobs:
   build:
     runs-on: ${{ inputs.runner }}
 
+    env:
+      # See rc-build-platform.yml — bundled Monaco exceeds Node's default heap
+      # on the hosted runners.
+      NODE_OPTIONS: --max-old-space-size=6144
+
     steps:
       - uses: actions/checkout@v4
 

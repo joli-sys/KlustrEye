@@ -1,3 +1,5 @@
+import { clusterPath } from "@/lib/paths";
+
 export type ResourceKind =
   | "pods"
   | "deployments"
@@ -285,14 +287,15 @@ export const RESOURCE_ROUTE_MAP: Record<
 };
 
 export function getResourceHref(
+  wsId: string,
   contextName: string,
   kind: string,
   name: string,
   namespace?: string
 ): string {
   const route = RESOURCE_ROUTE_MAP[kind];
-  if (!route) return `/clusters/${encodeURIComponent(contextName)}`;
-  const base = `/clusters/${encodeURIComponent(contextName)}/${route.path}`;
+  if (!route) return clusterPath(wsId, contextName, "");
+  const base = clusterPath(wsId, contextName, route.path);
   if (!route.hasDetail) return base;
   const detail = `${base}/${encodeURIComponent(name)}`;
   if (namespace) return `${detail}?ns=${encodeURIComponent(namespace)}`;

@@ -6,6 +6,7 @@ import { useUIStore } from "@/lib/stores/ui-store";
 import { useSavedSearches } from "@/lib/stores/saved-searches-store";
 import { SIDEBAR_SECTIONS, getResourceHref, RESOURCE_ROUTE_MAP, RESOURCE_REGISTRY, type ResourceKind } from "@/lib/constants";
 import { useResourceSearch, type SearchResult } from "@/hooks/use-search";
+import { useWorkspaceId, useClusterPath } from "@/hooks/use-cluster-path";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Search, Loader2, X, Star } from "lucide-react";
@@ -26,7 +27,7 @@ function useDebounce(value: string, delay: number) {
 }
 
 export function CommandPalette() {
-  const { commandPaletteOpen, setCommandPaletteOpen, setClusterNamespace } = useUIStore();
+  const { commandPaletteOpen, setCommandPaletteOpen, setWorkspaceNamespace } = useUIStore();
   const { searches: savedSearches, removeSearch } = useSavedSearches();
   const [query, setQuery] = useState("");
   const [selectedIndex, setSelectedIndex] = useState(0);
@@ -36,13 +37,15 @@ export function CommandPalette() {
   const params = useParams();
   const contextName = params?.contextName as string;
   const ctx = contextName ? decodeURIComponent(contextName) : "";
+  const wsId = useWorkspaceId();
+  const clusterHref = useClusterPath();
 
   const favoriteItems: PaletteItem[] = useMemo(() => {
     if (query || !ctx || savedSearches.length === 0) return [];
     return savedSearches.map((s) => {
       const route = RESOURCE_ROUTE_MAP[s.kind];
       const path = route?.path ?? s.kind;
-      const href = `/clusters/${encodeURIComponent(ctx)}/${path}?filter=${encodeURIComponent(s.query)}`;
+      const href = `${clusterHref(path)}?filter=${encodeURIComponent(s.query)}`;
       return {
         type: "favorite" as const,
         id: s.id,
@@ -53,7 +56,7 @@ export function CommandPalette() {
         href,
       };
     });
-  }, [query, ctx, savedSearches]);
+  }, [query, ctx, savedSearches, clusterHref]);
 
   const debouncedQuery = useDebounce(query, 300);
   const { data: searchData, isFetching } = useResourceSearch(
@@ -68,13 +71,13 @@ export function CommandPalette() {
         items.push({
           type: "page",
           label: item.label,
-          href: `/clusters/${ctx ? encodeURIComponent(ctx) : ""}/${item.href}`,
+          href: clusterHref(item.href),
           section: section.title,
         });
       }
     }
     return items;
-  }, [ctx]);
+  }, [clusterHref]);
 
   const filteredPages = useMemo(() => {
     if (!query) return pageItems;
@@ -93,9 +96,9 @@ export function CommandPalette() {
     return searchData.results.map((r) => ({
       type: "resource" as const,
       result: r,
-      href: getResourceHref(ctx, r.kind, r.name, r.namespace),
+      href: getResourceHref(wsId, ctx, r.kind, r.name, r.namespace),
     }));
-  }, [searchData, ctx]);
+  }, [searchData, wsId, ctx]);
 
   const flatItems = useMemo(() => {
     return [...favoriteItems, ...filteredPages, ...resourceItems];
@@ -129,13 +132,13 @@ export function CommandPalette() {
 
   const navigate = useCallback(
     (item: PaletteItem) => {
-      if (item.type === "favorite" && ctx) {
-        setClusterNamespace(ctx, item.namespace ?? "__all__");
+      if (item.type === "favorite" && wsId) {
+        setWorkspaceNamespace(wsId, item.namespace ?? "__all__");
       }
       routerNavigate(item.href);
       setCommandPaletteOpen(false);
     },
-    [routerNavigate, setCommandPaletteOpen, setClusterNamespace, ctx]
+    [routerNavigate, setCommandPaletteOpen, setWorkspaceNamespace, wsId]
   );
 
   const handleKeyDown = (e: React.KeyboardEvent) => {

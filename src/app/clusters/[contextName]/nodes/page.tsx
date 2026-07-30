@@ -9,6 +9,7 @@ import { parseCpuValue, parseMemoryValue, formatBytes, formatCpu } from "@/lib/u
 import type { ColumnDef } from "@tanstack/react-table";
 import { useToast } from "@/components/ui/toast";
 import { useConfirm } from "@/components/ui/confirm-dialog";
+import { useClusterPath } from "@/hooks/use-cluster-path";
 
 function UsageBar({ pct, used, total }: { pct: number; used: string; total: string }) {
   return (
@@ -30,6 +31,7 @@ function UsageBar({ pct, used, total }: { pct: number; used: string; total: stri
 export default function NodesPage() {
   const { contextName = "" } = useParams();
   const ctx = decodeURIComponent(contextName);
+  const path = useClusterPath();
   const { data, isLoading } = useResources(ctx, "nodes");
   const { data: metricsData } = useNodeMetrics(ctx);
   const deleteMutation = useDeleteResource(ctx, "nodes");
@@ -346,7 +348,7 @@ export default function NodesPage() {
         onBatchDelete={handleBatchDelete}
         detailLinkFn={(item) => {
           const metadata = item.metadata as Record<string, unknown>;
-          return `/clusters/${encodeURIComponent(ctx)}/nodes/${metadata.name}`;
+          return path(`nodes/${metadata.name}`);
         }}
       />
     </div>

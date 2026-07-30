@@ -15,10 +15,12 @@ import { useNetworkGraph, type NetworkNodeData, type ViewMode } from "./use-netw
 import { layoutGraph } from "./layout";
 import { nodeTypes } from "./custom-nodes";
 import { getResourceHref } from "@/lib/constants";
+import { useWorkspaceId } from "@/hooks/use-cluster-path";
 import { Share2, Network, GitBranch } from "lucide-react";
 
 export function NetworkMap({ contextName }: { contextName: string }) {
   const navigate = useNavigate();
+  const wsId = useWorkspaceId();
   const [viewMode, setViewMode] = useState<ViewMode>("network");
   const { nodes: rawNodes, edges: rawEdges, isLoading } = useNetworkGraph(contextName, viewMode);
 
@@ -50,11 +52,11 @@ export function NetworkMap({ contextName }: { contextName: string }) {
       }
       const kind = kindMap[data.kind];
       if (kind) {
-        const href = getResourceHref(contextName, kind, data.resourceName, data.namespace);
+        const href = getResourceHref(wsId, contextName, kind, data.resourceName, data.namespace);
         navigate(href);
       }
     },
-    [contextName, navigate]
+    [wsId, contextName, navigate]
   );
 
   if (isLoading) {

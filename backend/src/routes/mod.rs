@@ -1,5 +1,7 @@
+pub mod agents;
 pub mod ai;
 pub mod clusters;
+pub mod files;
 pub mod grafana;
 pub mod helm;
 pub mod logs;
@@ -9,18 +11,31 @@ pub mod organizations;
 pub mod port_forward;
 pub mod resources;
 pub mod settings;
+pub mod workspaces;
 
 use axum::{
-    extract::{Path, State, WebSocketUpgrade},
+    extract::{DefaultBodyLimit, Path, State, WebSocketUpgrade},
     response::IntoResponse,
     routing::{delete, get, patch, post, put},
     Router,
 };
 
 use crate::{
-    ws::{shell::handle_shell, terminal::handle_terminal},
+    ws::{
+        agent::{ensure_session_exists, handle_agent},
+        shell::handle_shell,
+        terminal::handle_terminal,
+        watch::handle_watch,
+    },
+    agents::MAX_ATTACHMENT_TOTAL_BYTES,
     AppState,
 };
+
+/// Request body ceiling for creating an agent session, which may carry attached
+/// context. Twice the attachment budget: JSON escaping roughly doubles a log in
+/// the worst case, and the honest 413 is the one the handler raises against
+/// `MAX_ATTACHMENT_TOTAL_BYTES`, naming the actual limit.
+const AGENT_SESSION_BODY_LIMIT: usize = 2 * MAX_ATTACHMENT_TOTAL_BYTES;
 
 pub fn build_router(state: AppState) -> Router {
     Router::new()
@@ -81,6 +96,21 @@ pub fn build_router(state: AppState) -> Router {
             .put(organizations::update_organization)
             .delete(organizations::delete_organization)
         )
+        // Workspaces
+        .route("/api/workspaces",
+            get(workspaces::list_workspaces).post(workspaces::create_workspace))
+        .route("/api/workspaces/resolve-cluster",
+            post(workspaces::resolve_cluster_workspace))
+        .route("/api/workspaces/:ws_id",
+            get(workspaces::get_workspace)
+                .put(workspaces::update_workspace)
+                .delete(workspaces::delete_workspace))
+        // Workspace filesystem — every path is confined to the workspace's
+        // bound folder by fs::resolve_in_workspace.
+        .route("/api/workspaces/:ws_id/files", get(files::list_files))
+        .route("/api/workspaces/:ws_id/file",
+            get(files::read_file).put(files::write_file))
+        .route("/api/workspaces/:ws_id/search", get(files::search_files))
         // Grafana / Mimir plugin
         .route("/api/clusters/:ctx/plugins/grafana/settings",
             get(grafana::get_settings)
@@ -99,6 +129,34 @@ pub fn build_router(state: AppState) -> Router {
             get(opencost::get_assets))
         .route("/api/clusters/:ctx/plugins/opencost/summary",
             get(opencost::get_summary))
+        // Agent definitions (registry of external CLI coding agents)
+        .route("/api/agent-definitions",
+            get(agents::list_agent_definitions).post(agents::create_agent_definition))
+        .route("/api/agent-definitions/:id",
+            put(agents::update_agent_definition)
+            .delete(agents::delete_agent_definition)
+        )
+        // Agent sessions (live PTYs, outliving the socket that started them)
+        //
+        // The body limit is raised on THIS route alone. A session may be seeded
+        // with attached context up to `agents::MAX_ATTACHMENT_TOTAL_BYTES`, and
+        // axum's 2 MiB default would reject a few megabytes of pod logs before
+        // the handler ever saw them — with "length limit exceeded", which says
+        // nothing about attachments. The headroom over the attachment cap is
+        // for JSON escaping: a log full of newlines and quotes inflates on the
+        // wire. Every other route keeps the default.
+        .route("/api/workspaces/:ws_id/agent-sessions",
+            get(agents::list_agent_sessions)
+                .post(agents::create_agent_session)
+                .layer(DefaultBodyLimit::max(AGENT_SESSION_BODY_LIMIT)))
+        // MUST stay above `/api/agent-sessions/:id` — a literal segment
+        // registered after the pattern is captured by it, and "recent" would
+        // be looked up as a session id.
+        .route("/api/agent-sessions/recent",
+            get(agents::list_recent_agent_sessions))
+        .route("/api/agent-sessions/:id",
+            put(agents::rename_agent_session)
+            .delete(agents::delete_agent_session))
         // Settings
         .route("/api/settings/kubeconfig",
             get(settings::get_kubeconfig).put(settings::set_kubeconfig))
@@ -107,9 +165,11 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/ai/settings",
             put(ai::save_ai_settings).delete(ai::delete_ai_settings))
         .route("/api/ai/chat", post(ai::post_ai_chat))
-        // WebSocket: terminal & shell
+        // WebSocket: terminal, shell & workspace file watching
         .route("/ws/terminal/:ctx/:namespace/:pod/:container", get(ws_terminal_handler))
         .route("/ws/shell/:ctx", get(ws_shell_handler))
+        .route("/ws/watch/:ws_id", get(ws_watch_handler))
+        .route("/ws/agent/:session_id", get(ws_agent_handler))
         .with_state(state)
 }
 
@@ -144,5 +204,38 @@ async fn ws_shell_handler(
 
     ws.on_upgrade(move |socket| async move {
         handle_shell(socket, state.db.clone(), context_name).await
+    })
+}
+
+/// Attaches to a live agent PTY. Detaching never kills it — see `ws/agent.rs`.
+async fn ws_agent_handler(
+    ws: WebSocketUpgrade,
+    Path(session_id): Path<String>,
+    State(state): State<AppState>,
+) -> impl IntoResponse {
+    let session_id = urlencoding::decode(&session_id).unwrap_or_default().to_string();
+
+    // Reject an unknown id with a real 404 before upgrading; afterwards the
+    // only channel left is a close frame the browser reports as a generic
+    // failure.
+    if let Err(e) = ensure_session_exists(&state, &session_id).await {
+        return e.into_response();
+    }
+
+    ws.on_upgrade(move |socket| async move {
+        handle_agent(socket, state.agents.clone(), session_id).await
+    })
+    .into_response()
+}
+
+async fn ws_watch_handler(
+    ws: WebSocketUpgrade,
+    Path(ws_id): Path<String>,
+    State(state): State<AppState>,
+) -> impl IntoResponse {
+    let ws_id = urlencoding::decode(&ws_id).unwrap_or_default().to_string();
+
+    ws.on_upgrade(move |socket| async move {
+        handle_watch(socket, state.db.clone(), ws_id).await
     })
 }

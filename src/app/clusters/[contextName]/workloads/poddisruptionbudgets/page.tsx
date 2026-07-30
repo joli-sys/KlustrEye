@@ -3,6 +3,7 @@ import { ResourceListPage } from "@/components/resource-list-page";
 import { useParams } from "react-router-dom";
 import { nameColumn, namespaceColumn, ageColumn } from "@/components/resource-table";
 import type { ColumnDef } from "@tanstack/react-table";
+import { useClusterPath } from "@/hooks/use-cluster-path";
 
 const columns: ColumnDef<Record<string, unknown>>[] = [
   nameColumn(),
@@ -53,6 +54,7 @@ const columns: ColumnDef<Record<string, unknown>>[] = [
 export default function PodDisruptionBudgetsPage() {
   const { contextName = "" } = useParams();
   const ctx = decodeURIComponent(contextName);
+  const path = useClusterPath();
 
   return (
     <ResourceListPage
@@ -61,7 +63,7 @@ export default function PodDisruptionBudgetsPage() {
       columns={columns}
       detailLinkFn={(item) => {
         const metadata = item.metadata as Record<string, unknown>;
-        return `/clusters/${encodeURIComponent(ctx)}/workloads/poddisruptionbudgets/${metadata.name}?ns=${metadata.namespace}`;
+        return `${path(`workloads/poddisruptionbudgets/${metadata.name}`)}?ns=${metadata.namespace}`;
       }}
     />
   );

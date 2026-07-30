@@ -14,12 +14,17 @@ import type { ResourceKind } from "@/lib/constants";
 import { RESOURCE_REGISTRY } from "@/lib/constants";
 import { stringify, parse } from "yaml";
 import { RelatedEvents } from "@/components/related-events";
-import { Save, Trash2, ArrowLeft, Sparkles } from "lucide-react";
+import { Save, Trash2, ArrowLeft, Sparkles, Bot } from "lucide-react";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import { Link } from "react-router-dom";
+import { clusterPath } from "@/lib/paths";
+import { useWorkspaceId } from "@/hooks/use-cluster-path";
 import { RESOURCE_ROUTE_MAP } from "@/lib/constants";
 import { useNavigate, useLocation, useSearchParams } from "react-router-dom";
 import { useInlineAiAction } from "@/hooks/use-ai";
+import { DispatchAgentDialog } from "@/components/dispatch-agent-dialog";
+import { buildResourceYamlAttachment, resourceDispatchPresets } from "@/lib/agent-dispatch";
+import { useWorkspace } from "@/hooks/use-workspaces";
 
 interface ResourceDetailProps {
   contextName: string;
@@ -62,8 +67,14 @@ export function ResourceDetail({
   const initialTab = currentSearchParams.get("tab") || "info";
   const [tab, setTab] = useState(initialTab);
   const [editedYaml, setEditedYaml] = useState<string | null>(null);
+  const [dispatchOpen, setDispatchOpen] = useState(false);
+  const workspaceId = useWorkspaceId();
+  const { data: workspace } = useWorkspace(workspaceId || undefined);
   const entry = RESOURCE_REGISTRY[kind];
 
+  // The same exclusion covers both hand-off actions, and applies harder to the
+  // agent one: dispatching writes the manifest to a FILE, and a Secret's data
+  // has no business being spilled onto disk for an agent to read.
   const EXPLAIN_EXCLUDED_KINDS: ResourceKind[] = ["configmaps", "secrets"];
   const showExplainButton = !EXPLAIN_EXCLUDED_KINDS.includes(kind);
 
@@ -131,6 +142,8 @@ export function ResourceDetail({
             <Button
               variant="outline"
               size="sm"
+              // Sits next to "Ask an agent", so it says which of the two it is.
+              title="Read-only: streams an explanation into the AI panel. Changes nothing."
               onClick={() =>
                 triggerAction(
                   `Explain what this ${entry.kind} named ${name} does and highlight any notable configuration.`,
@@ -149,6 +162,18 @@ export function ResourceDetail({
               Explain This
             </Button>
           )}
+          {showExplainButton && data && workspaceId && (
+            <Button
+              variant="outline"
+              size="sm"
+              title="Starts a real agent session in a terminal: it can read your repository, edit files and run commands."
+              onClick={() => setDispatchOpen(true)}
+              className="gap-1.5"
+            >
+              <Bot className="h-3.5 w-3.5" />
+              Ask an agent
+            </Button>
+          )}
           {tab === "yaml" && editedYaml !== null && (
             <Button size="sm" onClick={handleSave} className="gap-2" disabled={updateMutation.isPending}>
               <Save className="h-4 w-4" />
@@ -161,6 +186,24 @@ export function ResourceDetail({
           </Button>
         </div>
       </div>
+
+      {workspaceId && (
+        <DispatchAgentDialog
+          open={dispatchOpen}
+          onOpenChange={setDispatchOpen}
+          wsId={workspaceId}
+          folderPath={workspace?.folderPath}
+          subject={`${entry.label} ${name}`}
+          sessionTitle={`${entry.kind}: ${name}`}
+          presets={resourceDispatchPresets({ kind: entry.kind, name, namespace })}
+          // The LIVE manifest, never `editedYaml`: the presets talk about what
+          // the cluster currently has, and an unsaved edit is not that. Same
+          // text "Explain This" sends, so the two actions cannot disagree.
+          buildAttachment={() =>
+            buildResourceYamlAttachment({ kind: entry.kind, name, yaml: yamlContent })
+          }
+        />
+      )}
 
       <Tabs value={tab} onValueChange={setTab}>
         <TabsList>
@@ -287,6 +330,7 @@ function OwnerRefRow({
 }) {
   const plural = KIND_TO_PLURAL[owner.kind];
   const route = plural ? RESOURCE_ROUTE_MAP[plural] : null;
+  const wsId = useWorkspaceId();
 
   return (
     <div className="flex justify-between">
@@ -297,7 +341,7 @@ function OwnerRefRow({
         <Badge variant="outline" className="text-[10px] mr-1.5">{owner.kind}</Badge>
         {route?.hasDetail ? (
           <Link
-            to={`/clusters/${encodeURIComponent(contextName)}/${route.path}/${encodeURIComponent(owner.name)}${namespace ? `?ns=${encodeURIComponent(namespace)}` : ""}`}
+            to={`${clusterPath(wsId, contextName, `${route.path}/${encodeURIComponent(owner.name)}`)}${namespace ? `?ns=${encodeURIComponent(namespace)}` : ""}`}
             className="font-mono text-primary hover:underline"
           >
             {owner.name}

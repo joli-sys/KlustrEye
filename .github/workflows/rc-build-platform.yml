@@ -23,6 +23,14 @@ jobs:
   build:
     runs-on: ${{ inputs.runner }}
 
+    env:
+      # Monaco is bundled rather than CDN-loaded (see src/lib/monaco-loader.ts),
+      # so Vite transforms the whole editor plus five language workers. That
+      # exceeds Node's default heap on the hosted runners and aborts with
+      # "Ineffective mark-compacts near heap limit" (exit 134). Applies to the
+      # tauri build too, which runs build:frontend via beforeBuildCommand.
+      NODE_OPTIONS: --max-old-space-size=6144
+
     steps:
       - uses: actions/checkout@v4
 

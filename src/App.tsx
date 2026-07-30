@@ -1,6 +1,15 @@
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+// Side-effect import: must run before any <Editor> mounts, otherwise the
+// monaco instance backing the model registry and the one backing the editors
+// diverge. See src/lib/monaco-loader.ts.
+import "@/lib/monaco-loader";
 import { Providers } from "@/components/providers";
 import { Footer } from "@/components/footer";
+import { WorkspaceLayout } from "@/components/workspace-layout";
+import { LegacyClusterRedirect } from "@/components/legacy-cluster-redirect";
+import { WorkspaceHome } from "@/components/workspace-home";
+import { FileEditor } from "@/components/file-editor";
+import { AgentTerminal } from "@/components/agent-terminal";
 
 // Pages
 import HomePage from "@/app/page";
@@ -68,7 +77,15 @@ export default function App() {
           <div className="flex-1 min-h-0 overflow-auto">
             <Routes>
               <Route path="/" element={<HomePage />} />
-              <Route path="/clusters/:contextName" element={<ClusterLayout />}>
+              <Route path="/w/:wsId" element={<WorkspaceLayout />}>
+                {/* Without this index route a folder-only workspace renders a
+                    blank <Outlet />. */}
+                <Route index element={<WorkspaceHome />} />
+                {/* Splat carries the workspace-relative file path. */}
+                <Route path="files/*" element={<FileEditor />} />
+                {/* Attaches to a running PTY; leaving does not stop it. */}
+                <Route path="agents/:sessionId" element={<AgentTerminal />} />
+                <Route path="clusters/:contextName" element={<ClusterLayout />}>
                 <Route index element={<Navigate to="overview" replace />} />
                 <Route path="overview" element={<OverviewPage />} />
                 <Route path="events" element={<EventsPage />} />
@@ -124,9 +141,14 @@ export default function App() {
                 <Route path="access/clusterrolebindings" element={<ClusterRoleBindingsPage />} />
                 <Route path="access/clusterrolebindings/:name" element={<ClusterRoleBindingDetailPage />} />
                 <Route path="plugins/:pluginId" element={<PluginPage />} />
+                </Route>
               </Route>
+              <Route path="/clusters/:contextName/*" element={<LegacyClusterRedirect />} />
+              <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>
           </div>
+          {/* CommandPalette renders from inside the route tree (ClusterLayout)
+              so useParams() actually resolves wsId + contextName. */}
           <Footer />
         </div>
       </Providers>

@@ -1,5 +1,7 @@
+pub mod agents;
 pub mod db;
 pub mod error;
+pub mod fs;
 pub mod k8s;
 pub mod routes;
 pub mod ai;
@@ -10,6 +12,7 @@ use axum::{
     http::{header, StatusCode, Uri},
     response::{IntoResponse, Response},
 };
+use agents::AgentRegistry;
 use k8s::client::KubeClientCache;
 use k8s::port_forward::PortForwardProcesses;
 use rust_embed::RustEmbed;
@@ -65,6 +68,9 @@ pub struct AppState {
     pub db: SqlitePool,
     pub clients: Arc<KubeClientCache>,
     pub port_forwards: PortForwardProcesses,
+    /// Live agent PTYs. Held here rather than in the WebSocket handler so a
+    /// session survives every socket that attaches to it.
+    pub agents: AgentRegistry,
 }
 
 pub async fn start_server(port: u16, database_url: &str) -> anyhow::Result<()> {
@@ -93,10 +99,30 @@ pub async fn start_server(port: u16, database_url: &str) -> anyhow::Result<()> {
 
     let port_forwards = k8s::port_forward::new_processes();
 
+    // Agent transcripts live beside the database, in the same app-data
+    // directory, so a session that ran before this process started can still be
+    // read. Pruned here, on the way up, rather than on a timer: it is the one
+    // moment nothing is attached and every session is known to have exited.
+    let transcript_dir = agents::transcript_dir_for_database_url(database_url);
+    let agents = AgentRegistry::with_transcripts(transcript_dir);
+    match agents::prune_agent_sessions(
+        &db,
+        agents.transcripts(),
+        agents::TRANSCRIPT_RETENTION_PER_WORKSPACE,
+    )
+    .await
+    {
+        Ok(0) => {}
+        Ok(n) => tracing::info!("pruned {n} old agent session(s) past the retention limit"),
+        // Retention is housekeeping; failing it must not stop the server.
+        Err(e) => tracing::warn!(error = %e, "failed to prune old agent sessions"),
+    }
+
     let state = AppState {
         db: db.clone(),
         clients,
         port_forwards: port_forwards.clone(),
+        agents: agents.clone(),
     };
 
     let app = routes::build_router(state.clone())
@@ -116,9 +142,14 @@ pub async fn start_server(port: u16, database_url: &str) -> anyhow::Result<()> {
     // Graceful shutdown — cleanup port-forwards
     let db_clone = db.clone();
     let pf_clone = port_forwards.clone();
+    let agents_clone = agents.clone();
     tokio::spawn(async move {
         let _ = tokio::signal::ctrl_c().await;
-        tracing::info!("Shutting down — cleaning up port-forwards...");
+        tracing::info!("Shutting down — cleaning up port-forwards and agent sessions...");
+        // Agents are children of this process, not daemons: leaving their
+        // process groups behind would strand compilers and test runners with no
+        // registry able to reach them again.
+        agents_clone.kill_all();
         k8s::port_forward::cleanup_all(&db_clone, &pf_clone).await;
         std::process::exit(0);
     });

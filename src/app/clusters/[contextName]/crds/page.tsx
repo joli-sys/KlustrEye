@@ -1,6 +1,7 @@
 ;
 import { useCRDs, type CRDDefinition } from "@/hooks/use-crds";
 import { useParams } from "react-router-dom";
+import { useClusterPath } from "@/hooks/use-cluster-path";
 import { ResourceTable, ageColumn } from "@/components/resource-table";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -57,6 +58,7 @@ const columns: ColumnDef<Record<string, unknown>>[] = [
 export default function CRDsPage() {
   const { contextName = "" } = useParams();
   const ctx = decodeURIComponent(contextName);
+  const path = useClusterPath();
   const { data, isLoading, refetch, isFetching } = useCRDs(ctx);
 
   return (
@@ -75,7 +77,7 @@ export default function CRDsPage() {
         detailLinkFn={(item) => {
           const crd = item as unknown as CRDDefinition;
           const version = crd.spec.versions.find((v) => v.storage)?.name || crd.spec.versions[0]?.name;
-          return `/clusters/${encodeURIComponent(ctx)}/crds/${encodeURIComponent(crd.spec.group)}/${version}/${crd.spec.names.plural}?scope=${crd.spec.scope}`;
+          return `${path(`crds/${encodeURIComponent(crd.spec.group)}/${version}/${crd.spec.names.plural}`)}?scope=${crd.spec.scope}`;
         }}
       />
     </div>

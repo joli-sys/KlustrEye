@@ -1,9 +1,19 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 
+/**
+ * The side panel shows exactly one of these at a time; the activity bar picks
+ * which. Availability is derived from the workspace bindings at render time
+ * (see `activity-bar.tsx`), so a persisted view that is currently unavailable
+ * is ignored rather than cleared — rebinding the folder brings Explorer back.
+ */
+export const ACTIVITY_VIEWS = ["explorer", "cluster", "search", "terminals"] as const;
+export type ActivityView = (typeof ACTIVITY_VIEWS)[number];
+
 interface UIState {
   sidebarOpen: boolean;
-  namespaceByCluster: Record<string, string>;
+  activityView: ActivityView;
+  namespaceByWorkspace: Record<string, string>;
   commandPaletteOpen: boolean;
   mobileSidebarOpen: boolean;
   resourceFilters: Record<string, string>;
@@ -11,9 +21,18 @@ interface UIState {
   shellTerminalHeight: number;
   clusterSwitcherOpen: boolean;
   aiPanelOpen: boolean;
+  /**
+   * One-shot signal: "Search workspace" (from the file-not-found state)
+   * seeds `find-in-files` with this query, which consumes it by clearing it
+   * back to null. Not persisted — a stale query surviving a reload would
+   * silently re-seed search with something the user never asked for.
+   */
+  pendingSearchQuery: string | null;
   toggleSidebar: () => void;
   setSidebarOpen: (open: boolean) => void;
-  setClusterNamespace: (contextName: string, ns: string) => void;
+  setActivityView: (view: ActivityView) => void;
+  setPendingSearchQuery: (query: string | null) => void;
+  setWorkspaceNamespace: (wsId: string, ns: string) => void;
   setCommandPaletteOpen: (open: boolean) => void;
   setMobileSidebarOpen: (open: boolean) => void;
   setResourceFilter: (key: string, value: string) => void;
@@ -30,7 +49,8 @@ export const useUIStore = create<UIState>()(
   persist(
     (set) => ({
       sidebarOpen: true,
-      namespaceByCluster: {},
+      activityView: "explorer",
+      namespaceByWorkspace: {},
       commandPaletteOpen: false,
       mobileSidebarOpen: false,
       resourceFilters: {},
@@ -38,11 +58,19 @@ export const useUIStore = create<UIState>()(
       shellTerminalHeight: 300,
       clusterSwitcherOpen: false,
       aiPanelOpen: false,
+      pendingSearchQuery: null,
       toggleSidebar: () => set((state) => ({ sidebarOpen: !state.sidebarOpen })),
       setSidebarOpen: (open) => set({ sidebarOpen: open }),
-      setClusterNamespace: (contextName, ns) =>
+      setActivityView: (view) => set({ activityView: view }),
+      setPendingSearchQuery: (query) =>
+        set(
+          query !== null
+            ? { pendingSearchQuery: query, activityView: "search" }
+            : { pendingSearchQuery: null }
+        ),
+      setWorkspaceNamespace: (wsId, ns) =>
         set((state) => ({
-          namespaceByCluster: { ...state.namespaceByCluster, [contextName]: ns },
+          namespaceByWorkspace: { ...state.namespaceByWorkspace, [wsId]: ns },
         })),
       setCommandPaletteOpen: (open) => set({ commandPaletteOpen: open }),
       setMobileSidebarOpen: (open) => set({ mobileSidebarOpen: open }),
@@ -65,19 +93,67 @@ export const useUIStore = create<UIState>()(
     }),
     {
       name: "klustreye-ui",
-      version: 2,
-      migrate: (persisted) => ({
-        namespaceByCluster: {},
-        resourceFilters: {},
-        shellTerminalHeight: 300,
-        ...(persisted && typeof persisted === "object" ? persisted : {}),
+      version: 3,
+      migrate: (persisted, version) => migrateUIState(persisted, version),
+      merge: (persisted, current) => ({
+        ...current,
+        ...migrateUIState(persisted, 3),
       }),
-      // aiPanelOpen intentionally excluded — AI panel state resets on app restart (not persisted)
+      // aiPanelOpen intentionally excluded — AI panel state resets on app restart
       partialize: (state) => ({
-        namespaceByCluster: state.namespaceByCluster,
+        namespaceByWorkspace: state.namespaceByWorkspace,
         resourceFilters: state.resourceFilters,
         shellTerminalHeight: state.shellTerminalHeight,
+        activityView: state.activityView,
       }),
     }
   )
 );
+
+export interface MigratedUIState {
+  namespaceByWorkspace: Record<string, string>;
+  resourceFilters: Record<string, string>;
+  shellTerminalHeight: number;
+  activityView: ActivityView;
+}
+
+/**
+ * v2 -> v3: namespaceByCluster -> namespaceByWorkspace, and resourceFilters
+ * re-keyed from `${contextName}::${kind}` to `${wsId}::${kind}`.
+ *
+ * Both are DROPPED rather than remapped: workspace ids do not exist at
+ * migration time, so any mapping would be a guess. Dropping resets the
+ * namespace to "default" and clears filters — both harmless and correct.
+ *
+ * Shape-driven for the same reason as the tab store (see tab-store.ts). New
+ * fields (e.g. `activityView`) get a default here rather than a version bump:
+ * a payload written before the field existed has no `version` mismatch to
+ * trigger `migrate`, so a version-driven default would never reach it.
+ */
+export function migrateUIState(persisted: unknown, _version: number): MigratedUIState {
+  const defaults: MigratedUIState = {
+    namespaceByWorkspace: {},
+    resourceFilters: {},
+    shellTerminalHeight: 300,
+    activityView: "explorer",
+  };
+  if (!persisted || typeof persisted !== "object") return defaults;
+
+  const p = persisted as Record<string, unknown>;
+  const isLegacy = "namespaceByCluster" in p;
+
+  return {
+    ...defaults,
+    namespaceByWorkspace: isLegacy
+      ? {}
+      : ((p.namespaceByWorkspace as Record<string, string>) ?? {}),
+    resourceFilters: isLegacy
+      ? {}
+      : ((p.resourceFilters as Record<string, string>) ?? {}),
+    shellTerminalHeight:
+      typeof p.shellTerminalHeight === "number" ? p.shellTerminalHeight : 300,
+    activityView: ACTIVITY_VIEWS.includes(p.activityView as ActivityView)
+      ? (p.activityView as ActivityView)
+      : defaults.activityView,
+  };
+}

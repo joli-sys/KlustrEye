@@ -11,6 +11,7 @@ import { useToast } from "@/components/ui/toast";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import { ArrowLeft, Eye, RotateCcw, Save, Undo2 } from "lucide-react";
 import { stringify } from "yaml";
+import { useClusterPath } from "@/hooks/use-cluster-path";
 import type { ColumnDef } from "@tanstack/react-table";
 
 interface HelmHistory {
@@ -29,6 +30,7 @@ export default function HelmReleasePage() {
   const [searchParams] = useSearchParams();
   const namespace = searchParams.get("namespace") || "default";
   const navigate = useNavigate();
+  const path = useClusterPath();
   const queryClient = useQueryClient();
   const { addToast } = useToast();
   const confirm = useConfirm();
@@ -153,7 +155,7 @@ export default function HelmReleasePage() {
         <Button
           variant="ghost"
           size="icon"
-          onClick={() => navigate(`/clusters/${encodeURIComponent(ctx)}/helm`)}
+          onClick={() => navigate(path("helm"))}
         >
           <ArrowLeft className="h-4 w-4" />
         </Button>
