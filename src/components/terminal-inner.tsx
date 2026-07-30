@@ -89,7 +89,17 @@ export function TerminalInner({ wsUrl, className, connectMessage, onReady }: Ter
 
     return () => {
       resizeObserver.disconnect();
-      wsRef.current?.close();
+      // Same reason as the reconnect effect's cleanup, with a sharper edge: the
+      // terminal is disposed on the next line, so a late onclose/onerror would
+      // write to a DISPOSED xterm rather than merely the wrong one.
+      const ws = wsRef.current;
+      if (ws) {
+        ws.onopen = null;
+        ws.onmessage = null;
+        ws.onerror = null;
+        ws.onclose = null;
+        ws.close();
+      }
       term.dispose();
     };
   }, []);
@@ -130,6 +140,19 @@ export function TerminalInner({ wsUrl, className, connectMessage, onReady }: Ter
 
     return () => {
       inputDisposable.dispose();
+      // Detach BEFORE closing. `close()` is asynchronous, so a superseded
+      // socket's onclose/onerror still fired afterwards — and they close over
+      // `term`, which this component deliberately keeps across `wsUrl` changes.
+      // The result was a stale "WebSocket error" / "Connection closed" written
+      // into whatever session the user had just switched to, while the process
+      // it belonged to was perfectly healthy.
+      //
+      // The normal case is unaffected: these only detach when the effect is
+      // torn down, which is exactly when the messages are no longer wanted.
+      ws.onopen = null;
+      ws.onmessage = null;
+      ws.onerror = null;
+      ws.onclose = null;
       ws.close();
     };
   }, [wsUrl, connectMessage]);

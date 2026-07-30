@@ -574,6 +574,20 @@ export function AgentTerminal() {
         >
           <Suspense fallback={<Skeleton className="h-full w-full" />}>
             <TerminalComponent
+              /**
+               * Keyed by session so each one gets its OWN xterm instance.
+               *
+               * `TerminalInner` deliberately creates its terminal once and only
+               * reconnects the socket when `wsUrl` changes — right for the
+               * cluster shell, wrong here: attaching replays the session's
+               * scrollback, so switching A -> B appended B's transcript to A's
+               * buffer, and coming back to A appended A's again. Both agents'
+               * output ended up interleaved in one pane.
+               *
+               * `terminal-panel.tsx` and `cluster-shell-terminal.tsx` already
+               * key theirs; this was the one that did not.
+               */
+              key={sessionId}
               wsUrl={agentWsUrl(sessionId)}
               className="h-full"
               // The backend opens with the scrollback replay; a "Connected"
