@@ -8,14 +8,6 @@
   <img src="public/screenshot_homepage.png" alt="KlustrEye">
 </p>
 
-<p align="center">
-  <img src="public/screenshot_overview.png" alt="KlustrEye">
-</p>
-
-<p align="center">
-  <img src="public/screenshot_pod.png" alt="KlustrEye">
-</p>
-
 A native desktop DevOps platform built with Tauri, React, and Rust — Kubernetes cluster operations, a real code editor, and supervised AI coding agents in one app. A **workspace** binds a local folder and any number of clusters, so diagnosing a broken pod, editing the Terraform or Helm chart that caused it, and handing the fix to an agent all happen without leaving the window.
 
 ## Features
@@ -63,6 +55,10 @@ A native desktop DevOps platform built with Tauri, React, and Rust — Kubernete
 - **Default namespace** — configurable default namespace, display name, and organization assignment via the cluster settings page
 - **Cluster shell terminal** — open a local shell scoped to a cluster context (portable-pty + WebSocket backend)
 
+<p align="center">
+  <img src="public/screenshot_overview.png" alt="Cluster overview with node, pod, and health status">
+</p>
+
 ### Workload Management
 - **Resource browsing** — view Deployments, StatefulSets, DaemonSets, ReplicaSets, Pods, Jobs, CronJobs, Services, Ingresses, ConfigMaps, Secrets, PVCs, ServiceAccounts, and Nodes
 - **Batch operations** — select multiple resources and delete in bulk
@@ -74,6 +70,10 @@ A native desktop DevOps platform built with Tauri, React, and Rust — Kubernete
 - **Owner references** — resource detail metadata shows "Controlled By" links to parent resources
 - **Secret value reveal** — click eye icon on pod env vars to lazy-fetch and decode base64 secret values inline
 - **RBAC Access** — browse and inspect Roles, ClusterRoles, RoleBindings, and ClusterRoleBindings
+
+<p align="center">
+  <img src="public/screenshot_pod.png" alt="Pod detail page with metadata, events, and logs">
+</p>
 
 ### Helm
 - **Release management** — list, install, and uninstall Helm releases
