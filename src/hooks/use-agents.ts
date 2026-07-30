@@ -70,6 +70,16 @@ export interface AgentSession {
    */
   hasTranscript?: boolean;
   /**
+   * How far a seeded prompt got — see {@link SeedStatus}. `"none"` for an
+   * ordinary session started from the sidebar.
+   *
+   * Optional for the same reason as `activity`, and its absence means "this
+   * backend cannot tell me", which is NOT the same as "delivered": a reader
+   * that treats a missing field as success would claim a prompt landed when it
+   * has no idea.
+   */
+  seedStatus?: SeedStatus;
+  /**
    * Optional: a client talking to an older/rolling-out backend may not see
    * these fields at all, so every reader must treat their absence as
    * "unknown" rather than assume a shape that isn't there.
@@ -77,6 +87,22 @@ export interface AgentSession {
   activity?: AgentActivity;
   waitingConfidence?: WaitingConfidence;
 }
+
+/**
+ * How far a session's primed prompt got.
+ *
+ * The backend does not write the prompt into the PTY until the agent has
+ * finished booting and gone quiet, so delivery is genuinely uncertain for the
+ * first seconds of a session and can fail outright:
+ *
+ * - `none` — nothing was seeded; an ordinary session.
+ * - `pending` — composed, waiting for the agent to be ready. Not yet delivered.
+ * - `sent` — written to the terminal.
+ * - `timed_out` — the agent never became ready within 30s. The session works;
+ *   only the prompt is missing, and the user has to paste it themselves.
+ * - `failed` — the process exited before it was ready, or the write failed.
+ */
+export type SeedStatus = "none" | "pending" | "sent" | "timed_out" | "failed";
 
 /**
  * A session listed outside its own workspace, so it carries the workspace's
@@ -241,15 +267,41 @@ export class AgentSessionError extends Error {
   }
 }
 
+/** One file placed beside a seeded session for the agent to read. */
+export interface AgentSessionAttachment {
+  /**
+   * A SUGGESTION, not a filename: the backend sanitizes it and prefixes an
+   * ordinal. `agent-dispatch.ts` sanitizes it client-side too, so the name the
+   * user was shown is the name they get.
+   */
+  name: string;
+  content: string;
+}
+
+export interface CreateAgentSessionInput {
+  definitionId: string;
+  title?: string;
+  /** Omit to run in the workspace's bound folder. */
+  cwd?: string;
+  /**
+   * The task to prime the agent with. The backend writes it to the PTY only
+   * once the agent is at a prompt, and reports the outcome as
+   * {@link SeedStatus} — sending this does not mean it arrives.
+   */
+  initialPrompt?: string;
+  /**
+   * Context the prompt is about. Written to FILES under the app-data directory
+   * (never into the user's repo) whose absolute paths the backend appends to
+   * `initialPrompt`; a terminal cannot take a megabyte paste reliably. Over the
+   * per-session byte budget the request fails with 413.
+   */
+  attachments?: AgentSessionAttachment[];
+}
+
 export function useCreateAgentSession(wsId: string | undefined) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (input: {
-      definitionId: string;
-      title?: string;
-      /** Omit to run in the workspace's bound folder. */
-      cwd?: string;
-    }): Promise<AgentSession> => {
+    mutationFn: async (input: CreateAgentSessionInput): Promise<AgentSession> => {
       const res = await fetch(`/api/workspaces/${encodeURIComponent(wsId!)}/agent-sessions`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -270,6 +322,56 @@ export function useCreateAgentSession(wsId: string | undefined) {
   });
 }
 
+
+/**
+ * Watches a just-created session until its primed prompt has either been
+ * delivered or definitively has not.
+ *
+ * A plain function rather than a hook on purpose. Dispatching from a Kubernetes
+ * view navigates straight to the session's tab, so the component that started
+ * the session unmounts within a frame — a `useQuery` watching for the outcome
+ * would be torn down before the backend's 30s readiness window even closes.
+ * The caller keeps its `addToast` closure, whose provider is still mounted.
+ *
+ * Resolves with the settled status, or `null` when there is nothing honest to
+ * say: the backend does not report the field, or the session is gone. `null`
+ * must NOT be reported as success.
+ */
+export async function waitForSeedStatus(
+  wsId: string,
+  sessionId: string,
+  options: { timeoutMs?: number; intervalMs?: number } = {}
+): Promise<SeedStatus | null> {
+  // Comfortably past the backend's 30s readiness timeout, so a `timed_out`
+  // that IS coming is seen rather than reported as "still pending".
+  const timeoutMs = options.timeoutMs ?? 45_000;
+  const intervalMs = options.intervalMs ?? 2_000;
+  const deadline = Date.now() + timeoutMs;
+
+  // The list endpoint is the only reader of `seedStatus` — there is no
+  // GET /api/agent-sessions/:id — so this costs one workspace list per poll,
+  // the same request the sidebar already makes every 5s.
+  for (;;) {
+    let sessions: AgentSession[];
+    try {
+      const res = await fetch(`/api/workspaces/${encodeURIComponent(wsId)}/agent-sessions`);
+      if (!res.ok) return null;
+      sessions = await res.json();
+    } catch {
+      // Offline, or the server went away. Nothing truthful to report.
+      return null;
+    }
+
+    const session = sessions.find((s) => s.id === sessionId);
+    // Vanished (killed, or pruned) — no outcome to report.
+    if (!session) return null;
+    if (session.seedStatus === undefined) return null;
+    if (session.seedStatus !== "pending") return session.seedStatus;
+
+    if (Date.now() + intervalMs > deadline) return session.seedStatus;
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+}
 
 /**
  * Renames a session — permanently.

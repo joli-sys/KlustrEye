@@ -6,8 +6,12 @@ import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Download, RefreshCw, Search, ArrowDown, Sparkles, Regex } from "lucide-react";
+import { Download, RefreshCw, Search, ArrowDown, Sparkles, Regex, Bot } from "lucide-react";
 import { useInlineAiAction } from "@/hooks/use-ai";
+import { DispatchAgentDialog } from "@/components/dispatch-agent-dialog";
+import { buildPodLogAttachment, logDispatchPresets } from "@/lib/agent-dispatch";
+import { useWorkspaceId } from "@/hooks/use-cluster-path";
+import { useWorkspace } from "@/hooks/use-workspaces";
 
 interface LogViewerProps {
   contextName: string;
@@ -27,6 +31,9 @@ export function LogViewer({ contextName, namespace, podName, containers, resourc
   const [previous, setPrevious] = useState(false);
   const logRef = useRef<HTMLPreElement>(null);
   const { triggerAction } = useInlineAiAction();
+  const [dispatchOpen, setDispatchOpen] = useState(false);
+  const wsId = useWorkspaceId();
+  const { data: workspace } = useWorkspace(wsId || undefined);
 
   const regexError = useMemo(() => {
     if (!useRegex || !search) return null;
@@ -60,6 +67,12 @@ export function LogViewer({ contextName, namespace, podName, containers, resourc
     }
     return lines.filter((line) => line.toLowerCase().includes(search.toLowerCase()));
   }, [logs, search, useRegex, regexError]);
+
+  // What both hand-off actions send: the lines the user is actually looking at,
+  // search filter included. Attaching the unfiltered log would hand the agent
+  // something other than what is on screen.
+  const visibleLogText = useMemo(() => filteredLines.join("\n"), [filteredLines]);
+  const hasLogsToHandOff = visibleLogText.trim().length > 0;
 
   const handleDownload = () => {
     const blob = new Blob([logs], { type: "text/plain" });
@@ -144,6 +157,9 @@ export function LogViewer({ contextName, namespace, podName, containers, resourc
         <Button
           variant="outline"
           size="sm"
+          // The two hand-off actions sit side by side, so each says what it is:
+          // this one answers, the next one acts.
+          title="Read-only: streams an explanation of these logs into the AI panel. Changes nothing."
           onClick={() =>
             triggerAction(
               "Analyze these logs and identify errors, warnings, or anomalies:",
@@ -152,7 +168,7 @@ export function LogViewer({ contextName, namespace, podName, containers, resourc
                 namespace,
                 resource_kind: resourceKind ?? "Pod",
                 resource_name: resourceName ?? podName,
-                log_lines: filteredLines.join("\n"),
+                log_lines: visibleLogText,
               }
             )
           }
@@ -161,7 +177,39 @@ export function LogViewer({ contextName, namespace, podName, containers, resourc
           <Sparkles className="h-3.5 w-3.5" />
           Analyze Logs
         </Button>
+        {wsId && (
+          <Button
+            variant="outline"
+            size="sm"
+            title="Starts a real agent session in a terminal: it can read your repository, edit files and run commands."
+            disabled={!hasLogsToHandOff}
+            onClick={() => setDispatchOpen(true)}
+            className="gap-1.5"
+          >
+            <Bot className="h-3.5 w-3.5" />
+            Ask an agent
+          </Button>
+        )}
       </div>
+
+      {wsId && (
+        <DispatchAgentDialog
+          open={dispatchOpen}
+          onOpenChange={setDispatchOpen}
+          wsId={wsId}
+          folderPath={workspace?.folderPath}
+          subject={`the logs from ${podName}`}
+          sessionTitle={`Logs: ${podName}`}
+          presets={logDispatchPresets({ podName, container, namespace })}
+          buildAttachment={() =>
+            buildPodLogAttachment({
+              podName,
+              container: container || undefined,
+              logs: visibleLogText,
+            })
+          }
+        />
+      )}
 
       {error && (
         <div className="text-red-400 text-sm p-3 border border-red-800 rounded-md">
