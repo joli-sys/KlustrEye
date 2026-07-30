@@ -315,6 +315,7 @@ There is no schema migration framework — adding a table is a new `CREATE TABLE
 ## Links
 
 - [GitHub](https://github.com/joli-sys/KlustrEye)
+- [Changelog](CHANGELOG.md)
 - [Jiří Oláh](https://o-li.cz)
 
 ## Contributing
