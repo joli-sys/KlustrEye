@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 import { useLocation, useParams } from "react-router-dom";
 import MonacoEditor from "@monaco-editor/react";
 import type * as monaco from "monaco-editor";
-import { AlertTriangle, FileQuestion, Loader2, RotateCcw, Save } from "lucide-react";
+import { AlertTriangle, FileQuestion, Loader2, RotateCcw, Save, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -18,6 +18,7 @@ import { useToast } from "@/components/ui/toast";
 import { useWorkspaceId } from "@/hooks/use-cluster-path";
 import { FileSaveError, useFile, useSaveFile, type FileContent } from "@/hooks/use-files";
 import { languageForPath } from "@/lib/editor/language";
+import { basename } from "@/lib/file-link";
 import {
   disposeModel,
   fileModelKey,
@@ -28,6 +29,7 @@ import {
   setViewState,
 } from "@/lib/editor/model-registry";
 import { useTabStore } from "@/lib/stores/tab-store";
+import { useUIStore } from "@/lib/stores/ui-store";
 
 /**
  * The tab href is built by whoever opened the tab, while `location.pathname`
@@ -107,6 +109,7 @@ export function FileEditor() {
   const { addToast } = useToast();
   const theme = useMonacoTheme();
   const saveFile = useSaveFile();
+  const setPendingSearchQuery = useUIStore((s) => s.setPendingSearchQuery);
 
   const { data, isFetching, isError, error, refetch } = useFile(
     wsId,
@@ -341,9 +344,18 @@ export function FileEditor() {
         detail={error instanceof Error ? error.message : path}
         note="Unsaved edits for this file are still held in memory and reappear once it can be read again."
         action={
-          <Button variant="outline" size="sm" onClick={() => void refetch()}>
-            <RotateCcw /> Retry
-          </Button>
+          <div className="flex gap-2">
+            <Button variant="outline" size="sm" onClick={() => void refetch()}>
+              <RotateCcw /> Retry
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setPendingSearchQuery(basename(path))}
+            >
+              <Search /> Search workspace for {basename(path)}
+            </Button>
+          </div>
         }
       />
     );

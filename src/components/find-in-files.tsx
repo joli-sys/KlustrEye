@@ -4,6 +4,7 @@ import { Search, Loader2, AlertCircle, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useSearchFiles, type SearchMatch } from "@/hooks/use-files";
 import { useTabStore } from "@/lib/stores/tab-store";
+import { useUIStore } from "@/lib/stores/ui-store";
 import { workspacePath } from "@/lib/paths";
 
 const DEBOUNCE_MS = 250;
@@ -68,6 +69,17 @@ export function FindInFiles({ wsId }: { wsId: string }) {
   const debouncedQuery = useDebounce(query, DEBOUNCE_MS);
   const { openTab } = useTabStore();
   const navigate = useNavigate();
+  const pendingSearchQuery = useUIStore((s) => s.pendingSearchQuery);
+  const setPendingSearchQuery = useUIStore((s) => s.setPendingSearchQuery);
+
+  // Consumes the one-shot signal from "Search workspace" (file-not-found
+  // state): seed the input, then clear it back to null so switching to
+  // Search again later never silently re-seeds a stale query.
+  useEffect(() => {
+    if (pendingSearchQuery === null) return;
+    setQuery(pendingSearchQuery);
+    setPendingSearchQuery(null);
+  }, [pendingSearchQuery, setPendingSearchQuery]);
 
   const { data, isLoading, isFetching, isError } = useSearchFiles(
     wsId,

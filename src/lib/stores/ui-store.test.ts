@@ -1,5 +1,28 @@
-import { describe, it, expect } from "vitest";
-import { migrateUIState } from "./ui-store";
+import { describe, it, expect, vi } from "vitest";
+
+// zustand's persist middleware defaults to `window.localStorage` and, when
+// unavailable, returns the bare store with no `.persist` api and no writes
+// at all — the case under environment: "node". Install a fake
+// `window.localStorage` BEFORE ui-store is imported (vi.hoisted runs ahead
+// of the import block) so the "never written to storage" test below
+// exercises the real persist path instead of a no-op.
+const STORAGE_KEY = "klustreye-ui";
+const fakeStorage = vi.hoisted(() => {
+  const entries = new Map<string, string>();
+  const storage = {
+    getItem: (k: string) => entries.get(k) ?? null,
+    setItem: (k: string, v: string) => void entries.set(k, v),
+    removeItem: (k: string) => void entries.delete(k),
+    clear: () => entries.clear(),
+    key: () => null,
+    length: 0,
+  };
+  (globalThis as { window?: unknown }).window = { localStorage: storage };
+  return storage;
+});
+
+import { migrateUIState, useUIStore } from "./ui-store";
+import { basename } from "@/lib/file-link";
 
 describe("migrateUIState", () => {
   it("supplies defaults for null input", () => {
@@ -50,5 +73,75 @@ describe("migrateUIState", () => {
   it("keeps a persisted activityView and rejects an unknown one", () => {
     expect(migrateUIState({ activityView: "cluster" }, 3).activityView).toBe("cluster");
     expect(migrateUIState({ activityView: "bogus" }, 3).activityView).toBe("explorer");
+  });
+});
+
+/** Basename extraction backing the file-not-found "Search workspace" action. */
+describe("basename (search-workspace target)", () => {
+  it("takes the last segment of a nested path", () => {
+    expect(basename("resources/app_caraudit_order.tf")).toBe("app_caraudit_order.tf");
+  });
+
+  it("returns the path unchanged when it has no directory", () => {
+    expect(basename("app_caraudit_order.tf")).toBe("app_caraudit_order.tf");
+  });
+
+  it("takes the last segment of a deeply nested path", () => {
+    expect(basename("a/b/c/d.yaml")).toBe("d.yaml");
+  });
+});
+
+describe("setPendingSearchQuery", () => {
+  it("sets the query and switches to the search view in one action", () => {
+    useUIStore.setState({ pendingSearchQuery: null, activityView: "explorer" });
+    useUIStore.getState().setPendingSearchQuery("app_caraudit_order.tf");
+
+    const state = useUIStore.getState();
+    expect(state.pendingSearchQuery).toBe("app_caraudit_order.tf");
+    expect(state.activityView).toBe("search");
+  });
+
+  it("clears the query without touching the current activity view", () => {
+    useUIStore.setState({ pendingSearchQuery: "x", activityView: "search" });
+    useUIStore.getState().setPendingSearchQuery(null);
+
+    const state = useUIStore.getState();
+    expect(state.pendingSearchQuery).toBeNull();
+    expect(state.activityView).toBe("search");
+  });
+
+  /**
+   * The one-shot model relies entirely on `find-in-files` consuming and
+   * clearing the query itself — nothing in the store auto-clears it on an
+   * unrelated view switch. Verifying that here is what makes the "clear on
+   * consumption, not on a timer or every switch" contract actually hold:
+   * if `setActivityView` silently cleared it, a query set while the search
+   * view was not visible would vanish before it could ever be consumed.
+   */
+  it("is not cleared by an unrelated setActivityView call", () => {
+    useUIStore.setState({ pendingSearchQuery: null, activityView: "explorer" });
+    useUIStore.getState().setPendingSearchQuery("app_caraudit_order.tf");
+
+    useUIStore.getState().setActivityView("explorer");
+
+    expect(useUIStore.getState().pendingSearchQuery).toBe("app_caraudit_order.tf");
+  });
+});
+
+/**
+ * `pendingSearchQuery` is a one-shot UI signal, not state that should survive
+ * a reload — a stale query surviving into a new session would silently
+ * re-seed search with something the user never asked for this time.
+ */
+describe("pendingSearchQuery persistence", () => {
+  it("is never written to storage, proven via partialize's allow-list", () => {
+    fakeStorage.clear();
+    useUIStore.setState({ pendingSearchQuery: "leaked-if-broken", activityView: "search" });
+
+    const written = fakeStorage.getItem(STORAGE_KEY);
+    expect(written).not.toBeNull();
+    const persisted = JSON.parse(written!).state;
+    expect(persisted.pendingSearchQuery).toBeUndefined();
+    expect(persisted.activityView).toBe("search");
   });
 });

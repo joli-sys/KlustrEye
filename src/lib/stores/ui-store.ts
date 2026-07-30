@@ -21,9 +21,17 @@ interface UIState {
   shellTerminalHeight: number;
   clusterSwitcherOpen: boolean;
   aiPanelOpen: boolean;
+  /**
+   * One-shot signal: "Search workspace" (from the file-not-found state)
+   * seeds `find-in-files` with this query, which consumes it by clearing it
+   * back to null. Not persisted — a stale query surviving a reload would
+   * silently re-seed search with something the user never asked for.
+   */
+  pendingSearchQuery: string | null;
   toggleSidebar: () => void;
   setSidebarOpen: (open: boolean) => void;
   setActivityView: (view: ActivityView) => void;
+  setPendingSearchQuery: (query: string | null) => void;
   setWorkspaceNamespace: (wsId: string, ns: string) => void;
   setCommandPaletteOpen: (open: boolean) => void;
   setMobileSidebarOpen: (open: boolean) => void;
@@ -50,9 +58,16 @@ export const useUIStore = create<UIState>()(
       shellTerminalHeight: 300,
       clusterSwitcherOpen: false,
       aiPanelOpen: false,
+      pendingSearchQuery: null,
       toggleSidebar: () => set((state) => ({ sidebarOpen: !state.sidebarOpen })),
       setSidebarOpen: (open) => set({ sidebarOpen: open }),
       setActivityView: (view) => set({ activityView: view }),
+      setPendingSearchQuery: (query) =>
+        set(
+          query !== null
+            ? { pendingSearchQuery: query, activityView: "search" }
+            : { pendingSearchQuery: null }
+        ),
       setWorkspaceNamespace: (wsId, ns) =>
         set((state) => ({
           namespaceByWorkspace: { ...state.namespaceByWorkspace, [wsId]: ns },
