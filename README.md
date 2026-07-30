@@ -42,7 +42,7 @@ A native desktop DevOps platform built with Tauri, React, and Rust — Kubernete
 - **Recent agents on the homepage** — every session across every workspace, running ones first, so "did anything finish overnight" doesn't require remembering which workspace it was in
 
 <p align="center">
-  <img src="public/screenshot_agent.png" alt="Searchable, chat-like agent session view">
+  <img src="public/screenshot_agents_management.png" alt="Agents management — start a session in any folder, track running and exited sessions, and read a finished transcript">
 </p>
 
 ### Cluster Management
