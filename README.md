@@ -34,6 +34,10 @@ A native desktop DevOps platform built with Tauri, React, and Rust — Kubernete
 - **Live filesystem watching** — the tree and search results update as files change on disk, without ever touching the content of a file you have open (that would overwrite unsaved edits)
 - **Path-confined filesystem API** — every file operation is canonicalized and verified inside the workspace folder before touching disk; traversal, absolute paths, and symlink escapes are rejected
 
+<p align="center">
+  <img src="public/screenshot_editor.png" alt="File tree and Monaco editor with Helm-template highlighting">
+</p>
+
 ### Agents
 - **Run any CLI coding agent** — Claude Code, Codex, Aider, or Hermes are seeded as built-ins; add your own via a definitions editor (command, args, env, and optional prompt-pattern regexes)
 - **Sessions outlive the tab** — a PTY-backed session runs under backend supervision, independent of any attached WebSocket; closing the tab does not stop the agent, and reattaching (even after restarting the app) replays a persisted transcript so you can read what happened while you were away
@@ -44,6 +48,10 @@ A native desktop DevOps platform built with Tauri, React, and Rust — Kubernete
 - **Hand a resource straight to an agent** — "Ask an agent" next to the existing AI actions on pod logs and resource YAML starts a session pre-seeded with the content, attached as a file (never pasted into the PTY) and delivered once the agent reaches its own prompt
 - **MCP server overview** — view and edit a workspace's `.mcp.json` (which servers, what they run, how many env vars) without leaving the app; round-trips every field the UI doesn't model, so nothing you set elsewhere gets silently dropped
 - **Recent agents on the homepage** — every session across every workspace, running ones first, so "did anything finish overnight" doesn't require remembering which workspace it was in
+
+<p align="center">
+  <img src="public/screenshot_agent.png" alt="Searchable, chat-like agent session view">
+</p>
 
 ### Cluster Management
 - **Multi-cluster support** — connect to any number of clusters from your kubeconfig
