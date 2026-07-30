@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useMatch, useNavigate } from "react-router-dom";
 import {
   Plus,
   Square,
@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { cn, formatAge } from "@/lib/utils";
 import { workspacePath } from "@/lib/paths";
+import { sortSidebarAgentSessions } from "@/lib/agent-activity";
 import { abbreviatePath } from "@/lib/agent-forms";
 import { errorText, isTauri, pickFolder } from "@/lib/folder-picker";
 import { useTabStore } from "@/lib/stores/tab-store";
@@ -113,7 +114,15 @@ export function SidebarAgents({ workspace, wsId }: { workspace: Workspace; wsId:
   const killSession = useKillAgentSession(wsId);
   const renameSession = useRenameAgentSession(wsId);
 
+  // This component is mounted by WorkspaceLayout as a sibling of the routed
+  // `<Outlet />` (see workspace-layout.tsx's `clusterMatch` for the same
+  // pattern), so plain `useParams()` cannot see `:sessionId` — it belongs to
+  // a route this component sits outside of.
+  const openSessionMatch = useMatch("/w/:wsId/agents/:sessionId");
+  const openSessionId = openSessionMatch?.params.sessionId;
+
   const [selectedDefinitionId, setSelectedDefinitionId] = useState("");
+  const [sessionName, setSessionName] = useState("");
   const [cwd, setCwd] = useState(workspace.folderPath ?? "");
   const [definitionsOpen, setDefinitionsOpen] = useState(false);
   const [mcpOpen, setMcpOpen] = useState(false);
@@ -166,10 +175,15 @@ export function SidebarAgents({ workspace, wsId }: { workspace: Workspace; wsId:
     try {
       const session = await createSession.mutateAsync({
         definitionId: selectedDefinitionId,
-        // Omitted rather than sent empty, so the backend falls back to the
-        // workspace folder instead of resolving "".
+        // Both omitted rather than sent empty, so the backend falls back to
+        // its own default (auto-title from output / the workspace folder)
+        // instead of resolving "".
+        title: sessionName.trim() || undefined,
         cwd: trimmedCwd || undefined,
       });
+      // A name typed for this session is not a good default for the next
+      // one — unlike `cwd`, which is deliberately kept.
+      setSessionName("");
       openSessionTab(session);
     } catch (err) {
       if (err instanceof AgentSessionError && err.status === 400) {
@@ -302,6 +316,14 @@ export function SidebarAgents({ workspace, wsId }: { workspace: Workspace; wsId:
           disabled={!definitions || definitions.length === 0}
         />
 
+        <Input
+          value={sessionName}
+          onChange={(e) => setSessionName(e.target.value)}
+          placeholder="Name (optional)"
+          title="Left blank, the session is auto-titled from its first output"
+          className="h-8 text-xs"
+        />
+
         <div className="flex items-center gap-1">
           <Input
             value={cwd}
@@ -353,7 +375,7 @@ export function SidebarAgents({ workspace, wsId }: { workspace: Workspace; wsId:
         {!isLoading && sessions && sessions.length === 0 && (
           <p className="text-xs text-muted-foreground">No agent sessions yet.</p>
         )}
-        {sessions?.map((session) => {
+        {sortSidebarAgentSessions(sessions, openSessionId).map((session) => {
           const isRenaming = renamingId === session.id;
           return (
             <div

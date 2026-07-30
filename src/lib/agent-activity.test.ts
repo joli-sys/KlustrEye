@@ -5,6 +5,7 @@ import {
   isHighConfidenceWaiting,
   newlyWaiting,
   sortAgentHistory,
+  sortSidebarAgentSessions,
   waitingCount,
 } from "./agent-activity";
 
@@ -194,5 +195,56 @@ describe("sortAgentHistory", () => {
 
   it("handles undefined", () => {
     expect(sortAgentHistory(undefined)).toEqual([]);
+  });
+});
+
+describe("sortSidebarAgentSessions", () => {
+  it("pins the open session first even when it is the oldest and exited", () => {
+    const sorted = sortSidebarAgentSessions(
+      [
+        session({ id: "running-new", status: "running", lastActivityAt: "2026-07-29 12:00:00" }),
+        session({ id: "open-old-exited", status: "exited", lastActivityAt: "2026-01-01 00:00:00" }),
+      ],
+      "open-old-exited"
+    );
+    expect(sorted.map((s) => s.id)).toEqual(["open-old-exited", "running-new"]);
+  });
+
+  it("orders the rest running-before-exited then by recency, same as sortAgentHistory", () => {
+    const sorted = sortSidebarAgentSessions(
+      [
+        session({ id: "opened", status: "running", lastActivityAt: "2026-07-01 00:00:00" }),
+        session({ id: "e-old", status: "exited", lastActivityAt: "2026-07-01 10:00:00" }),
+        session({ id: "r-new", status: "running", lastActivityAt: "2026-07-03 10:00:00" }),
+        session({ id: "e-new", status: "exited", lastActivityAt: "2026-07-28 10:00:00" }),
+      ],
+      "opened"
+    );
+    expect(sorted.map((s) => s.id)).toEqual(["opened", "r-new", "e-new", "e-old"]);
+  });
+
+  it("falls back to the plain running-first/recency rule when nothing is open", () => {
+    const sessions = [
+      session({ id: "e-old", status: "exited", lastActivityAt: "2026-07-01 10:00:00" }),
+      session({ id: "r-new", status: "running", lastActivityAt: "2026-07-03 10:00:00" }),
+    ];
+    expect(sortSidebarAgentSessions(sessions, null).map((s) => s.id)).toEqual(["r-new", "e-old"]);
+    expect(sortSidebarAgentSessions(sessions, undefined).map((s) => s.id)).toEqual([
+      "r-new",
+      "e-old",
+    ]);
+  });
+
+  it("does not crash or pin a phantom row when the open session id is not in the list", () => {
+    const sessions = [
+      session({ id: "e-old", status: "exited", lastActivityAt: "2026-07-01 10:00:00" }),
+      session({ id: "r-new", status: "running", lastActivityAt: "2026-07-03 10:00:00" }),
+    ];
+    const sorted = sortSidebarAgentSessions(sessions, "stale-route-id");
+    expect(sorted.map((s) => s.id)).toEqual(["r-new", "e-old"]);
+  });
+
+  it("handles undefined sessions", () => {
+    expect(sortSidebarAgentSessions(undefined, "anything")).toEqual([]);
   });
 });

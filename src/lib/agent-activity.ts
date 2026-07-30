@@ -98,16 +98,52 @@ function recencyKey(session: Pick<AgentSession, "createdAt" | "lastActivityAt">)
  * not visibly reorder anything, which is exactly why it is worth avoiding
  * here rather than discovering later.
  *
+ * Shared with `sortSidebarAgentSessions`, which pins one row ahead of this
+ * ordering rather than replacing it.
+ */
+function byRunningThenRecency(
+  a: Pick<AgentSession, "status" | "createdAt" | "lastActivityAt">,
+  b: Pick<AgentSession, "status" | "createdAt" | "lastActivityAt">
+): number {
+  const aLive = a.status !== "exited";
+  const bLive = b.status !== "exited";
+  if (aLive !== bLive) return aLive ? -1 : 1;
+  return recencyKey(b).localeCompare(recencyKey(a));
+}
+
+/**
+ * Running sessions first, then most recently active first.
+ *
  * Returns a new array; the input is not mutated. Ties keep the server's order,
  * `Array.prototype.sort` being stable.
  */
 export function sortAgentHistory(
   sessions: RecentAgentSession[] | undefined
 ): RecentAgentSession[] {
-  return [...(sessions ?? [])].sort((a, b) => {
-    const aLive = a.status !== "exited";
-    const bLive = b.status !== "exited";
-    if (aLive !== bLive) return aLive ? -1 : 1;
-    return recencyKey(b).localeCompare(recencyKey(a));
-  });
+  return [...(sessions ?? [])].sort(byRunningThenRecency);
+}
+
+/**
+ * Pins the session whose tab is currently OPEN to the top, regardless of its
+ * own status, then orders the rest exactly like `sortAgentHistory` (running
+ * before exited, most recent first).
+ *
+ * For the sidebar's per-workspace list, not the homepage history: "active"
+ * here means "the route the user is looking at right now", a concept that
+ * only exists once there is an open tab to pin. `sortAgentHistory` has no
+ * such notion and must keep meaning "running" — this function does not
+ * change that, it composes with it.
+ *
+ * An `openSessionId` that is `null`/`undefined`, or that names no session in
+ * the list (a stale route), falls back to the plain ordering rather than
+ * pinning a phantom row.
+ */
+export function sortSidebarAgentSessions(
+  sessions: AgentSession[] | undefined,
+  openSessionId: string | null | undefined
+): AgentSession[] {
+  const list = sessions ?? [];
+  const open = openSessionId ? list.find((s) => s.id === openSessionId) : undefined;
+  const rest = list.filter((s) => s !== open).sort(byRunningThenRecency);
+  return open ? [open, ...rest] : rest;
 }
