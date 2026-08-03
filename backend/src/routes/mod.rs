@@ -110,6 +110,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/workspaces/:ws_id/files", get(files::list_files))
         .route("/api/workspaces/:ws_id/file",
             get(files::read_file).put(files::write_file))
+        .route("/api/workspaces/:ws_id/directory", post(files::create_directory))
         .route("/api/workspaces/:ws_id/search", get(files::search_files))
         // Grafana / Mimir plugin
         .route("/api/clusters/:ctx/plugins/grafana/settings",

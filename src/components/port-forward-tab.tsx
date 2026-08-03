@@ -7,6 +7,8 @@ import { Badge } from "@/components/ui/badge";
 import { usePortForwards, useStopPortForward } from "@/hooks/use-port-forward";
 import { PortForwardDialog } from "@/components/port-forward-dialog";
 import { Cable, ExternalLink, Square } from "lucide-react";
+import { externalLinkHandler } from "@/lib/open-external";
+import { useToast } from "@/components/ui/toast";
 
 interface AvailablePort {
   name?: string;
@@ -32,6 +34,9 @@ export function PortForwardTab({
   const { data: forwards } = usePortForwards(contextName);
   const stopMutation = useStopPortForward(contextName);
   const [dialogPort, setDialogPort] = useState<number | null>(null);
+  const { addToast } = useToast();
+  const openFailed = (description: string) =>
+    addToast({ title: "Could not open the link", description, variant: "destructive" });
 
   const resourceForwards = (forwards || []).filter(
     (f) => f.resourceName === resourceName && f.namespace === namespace && f.resourceType === resourceType
@@ -69,6 +74,10 @@ export function PortForwardTab({
                             href={`http://localhost:${activeForward.localPort}`}
                             target="_blank"
                             rel="noopener noreferrer"
+                            onClick={externalLinkHandler(
+                              `http://localhost:${activeForward.localPort}`,
+                              openFailed
+                            )}
                             className="inline-flex items-center gap-1 text-sm text-primary hover:underline font-mono"
                           >
                             localhost:{activeForward.localPort}

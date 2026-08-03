@@ -146,6 +146,49 @@ export function useSaveFile() {
   });
 }
 
+/**
+ * Creates a directory (and any missing parents) in the workspace.
+ *
+ * There is deliberately no matching `useCreateFile`: `useSaveFile` with no
+ * `baseModifiedMs` already creates one, and a second path to the same write
+ * would be a second place for the conflict-detection rules to drift.
+ *
+ * Reuses `FileSaveError` so callers can tell a 409 (the name is taken) from a
+ * 400 (the name is not a usable relative path) and word each differently.
+ */
+export function useCreateDirectory() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      wsId,
+      path,
+    }: {
+      wsId: string;
+      path: string;
+    }): Promise<{ path: string }> => {
+      const res = await fetch(
+        `/api/workspaces/${encodeURIComponent(wsId)}/directory`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ path }),
+        }
+      );
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new FileSaveError(
+          body.error || "Failed to create directory",
+          res.status
+        );
+      }
+      return res.json();
+    },
+    onSuccess: (_result, variables) => {
+      qc.invalidateQueries({ queryKey: ["files", variables.wsId] });
+    },
+  });
+}
+
 export function useSearchFiles(
   wsId: string | undefined,
   q: string,

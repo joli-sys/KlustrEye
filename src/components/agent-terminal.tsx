@@ -27,10 +27,10 @@ import {
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useWorkspaceId } from "@/hooks/use-cluster-path";
 import { useWorkspace } from "@/hooks/use-workspaces";
+import { encodeComposerSubmission, isComposerSubmit } from "@/lib/agent-input";
 import { basename, findFileReferences, resolveFileReference } from "@/lib/file-link";
 import { workspacePath } from "@/lib/paths";
 import { useTabStore } from "@/lib/stores/tab-store";
@@ -154,6 +154,8 @@ export function AgentTerminal() {
   const rootRef = useRef<HTMLDivElement>(null);
   const frameRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
+
+  const composerRef = useRef<HTMLTextAreaElement>(null);
 
   const [term, setTerm] = useState<Terminal | null>(null);
   const [search, setSearch] = useState<SearchAddon | null>(null);
@@ -401,10 +403,17 @@ export function AgentTerminal() {
 
   const submit = (e: FormEvent) => {
     e.preventDefault();
-    if (exited || !draft) return;
-    // `\r` is what a terminal sends for Return; `\n` would leave line-based
-    // prompts waiting for the rest of the line.
-    sendRef.current(`${draft}\r`);
+    if (exited) return;
+    const encoded = encodeComposerSubmission(draft);
+    if (!encoded) return;
+
+    // A multi-line message goes through xterm's `paste`, which wraps it in
+    // bracketed-paste markers ONLY if the running agent enabled that mode —
+    // writing the newlines raw would submit each line as its own message.
+    // `paste` emits through the same `onData` -> WebSocket path as `send`.
+    if (encoded.paste !== null) term?.paste(encoded.paste);
+    sendRef.current(encoded.send);
+
     setDraft("");
     term?.scrollToBottom();
   };
@@ -418,6 +427,24 @@ export function AgentTerminal() {
       setCopied(false);
     }
   };
+
+  /**
+   * Grows the composer with its content, up to a cap.
+   *
+   * Driven off `draft` rather than off the keystroke so it also shrinks back
+   * after a send, and so a programmatic change is not a special case. The
+   * height is reset to `auto` first because `scrollHeight` never reports a
+   * value smaller than the element's current height — without it the box
+   * would ratchet upwards and never come back down.
+   */
+  useEffect(() => {
+    const el = composerRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    // ~6 lines. Past that the composer would start eating the transcript,
+    // which is the thing the user is writing about.
+    el.style.height = `${Math.min(el.scrollHeight, 132)}px`;
+  }, [draft]);
 
   // Reset the copied acknowledgement without leaving a timer behind on unmount.
   useEffect(() => {
@@ -617,24 +644,60 @@ export function AgentTerminal() {
         )}
       </div>
 
-      <form onSubmit={submit} className="flex shrink-0 items-center gap-2 border-t px-3 py-2">
-        <Input
+      <form onSubmit={submit} className="flex shrink-0 items-end gap-2 border-t px-3 py-2">
+        <textarea
+          ref={composerRef}
           value={draft}
+          rows={1}
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key !== "Escape") return;
-            e.preventDefault();
-            term?.focus();
+            if (e.key === "Escape") {
+              e.preventDefault();
+              term?.focus();
+              return;
+            }
+            // Shift+Enter falls through to the textarea's own handling, which
+            // is the new line. Everything else about submitting is decided by
+            // `isComposerSubmit` so the modifier and IME rules stay testable.
+            //
+            // Spelled out rather than passing `e`: React's synthetic event has
+            // no `isComposing` — it lives on `nativeEvent` — so handing the
+            // synthetic event straight in would leave that check permanently
+            // `undefined` and submit halfway through an IME composition.
+            if (
+              isComposerSubmit({
+                key: e.key,
+                shiftKey: e.shiftKey,
+                ctrlKey: e.ctrlKey,
+                metaKey: e.metaKey,
+                altKey: e.altKey,
+                isComposing: e.nativeEvent.isComposing,
+              })
+            ) {
+              e.preventDefault();
+              submit(e);
+            }
           }}
           disabled={exited}
           placeholder={
-            exited ? "This session has ended" : "Message the agent — Enter to send"
+            exited
+              ? "This session has ended"
+              : "Message the agent — Enter to send, Shift+Enter for a new line"
           }
-          title="Sends a line of text. Raw keys (arrows, Ctrl-C, Tab) go to the terminal itself — click it and type there."
+          title="Sends text as if typed at the prompt. Raw keys (arrows, Ctrl-C, Tab) go to the terminal itself — click it and type there."
           aria-label="Message the agent"
-          className="h-8 text-xs"
+          className={cn(
+            "min-h-8 flex-1 resize-none rounded-md border border-input bg-transparent px-3 py-1.5 text-xs",
+            "placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1",
+            "focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+          )}
         />
-        <Button type="submit" size="sm" className="h-8 shrink-0 gap-1" disabled={exited || !draft}>
+        <Button
+          type="submit"
+          size="sm"
+          className="h-8 shrink-0 gap-1"
+          disabled={exited || !draft.trim()}
+        >
           <CornerDownLeft className="h-3.5 w-3.5" />
           Send
         </Button>

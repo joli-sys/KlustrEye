@@ -255,6 +255,58 @@ pub async fn write_file(
     })))
 }
 
+#[derive(Deserialize)]
+pub struct CreateDirBody {
+    pub path: String,
+}
+
+/// Creates a directory, and any missing parents, inside the workspace.
+///
+/// There is no equivalent for files because there does not need to be:
+/// `write_file` with no `baseModifiedMs` already creates one (that branch is
+/// what the editor's "save a new file" path uses). A directory has no content
+/// to write, so it is the one creation the file API could not express.
+///
+/// An existing path is a 409 rather than a silent success. `create_dir_all` is
+/// idempotent and would happily return OK, but the caller here is a user who
+/// typed a name — telling them it is already taken is the useful answer, and it
+/// keeps "New folder" from looking like it worked when it adopted someone
+/// else's directory.
+pub async fn create_directory(
+    Path(ws_id): Path<String>,
+    State(state): State<AppState>,
+    Json(body): Json<CreateDirBody>,
+) -> Result<Json<Value>> {
+    let root = workspace_root(&state, &ws_id).await?;
+    let rel = normalize_rel(&body.path);
+    if rel.is_empty() {
+        return Err(AppError::BadRequest("path is required".into()));
+    }
+    let dir = resolve_in_workspace_async(root, rel.clone()).await?;
+    create_dir_checked(&dir, &rel).await?;
+    Ok(Json(json!({ "path": rel })))
+}
+
+/// The filesystem half of [`create_directory`], split out so the conflict rules
+/// are testable without standing up an `AppState`. `rel` is carried only to
+/// name the path in error messages — confinement was already decided by
+/// `resolve_in_workspace`.
+async fn create_dir_checked(dir: &StdPath, rel: &str) -> Result<()> {
+    if let Ok(meta) = tokio::fs::metadata(dir).await {
+        return Err(AppError::Conflict(if meta.is_dir() {
+            format!("directory already exists: {rel}")
+        } else {
+            format!("a file already exists at: {rel}")
+        }));
+    }
+
+    tokio::fs::create_dir_all(dir)
+        .await
+        .map_err(|e| AppError::Internal(format!("cannot create directory: {e}")))?;
+
+    Ok(())
+}
+
 pub async fn search_files(
     Path(ws_id): Path<String>,
     Query(q): Query<SearchQuery>,
@@ -496,5 +548,52 @@ mod tests {
 
         assert_eq!(matches.len(), 10);
         assert!(truncated);
+    }
+
+    #[tokio::test]
+    async fn create_dir_makes_missing_parents() {
+        let d = tempfile::tempdir().unwrap();
+        let nested = d.path().join("a/b/c");
+
+        create_dir_checked(&nested, "a/b/c").await.unwrap();
+
+        assert!(nested.is_dir());
+        assert!(d.path().join("a").is_dir(), "parents are created too");
+    }
+
+    /// `create_dir_all` is idempotent and would return OK here. That is the
+    /// wrong answer for a user who just typed a name: "New folder" would look
+    /// like it created something when it silently adopted an existing tree.
+    #[tokio::test]
+    async fn create_dir_refuses_an_existing_directory() {
+        let d = tempfile::tempdir().unwrap();
+        fs::create_dir(d.path().join("src")).unwrap();
+
+        let err = create_dir_checked(&d.path().join("src"), "src")
+            .await
+            .unwrap_err();
+
+        assert!(
+            matches!(err, AppError::Conflict(ref m) if m.contains("directory already exists")),
+            "got {err:?}"
+        );
+    }
+
+    /// A file sitting where the directory should go is a different mistake and
+    /// gets its own wording — `create_dir_all` would fail here with a raw
+    /// `File exists` I/O error and a 500.
+    #[tokio::test]
+    async fn create_dir_refuses_a_path_occupied_by_a_file() {
+        let d = tempfile::tempdir().unwrap();
+        fs::write(d.path().join("notes.txt"), "hi").unwrap();
+
+        let err = create_dir_checked(&d.path().join("notes.txt"), "notes.txt")
+            .await
+            .unwrap_err();
+
+        assert!(
+            matches!(err, AppError::Conflict(ref m) if m.contains("a file already exists")),
+            "got {err:?}"
+        );
     }
 }

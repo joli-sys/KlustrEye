@@ -5,12 +5,17 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { usePortForwards, useStopPortForward } from "@/hooks/use-port-forward";
 import { Cable, ExternalLink, Square } from "lucide-react";
+import { externalLinkHandler } from "@/lib/open-external";
+import { useToast } from "@/components/ui/toast";
 
 export default function PortForwardsPage() {
   const { contextName = "" } = useParams();
   const ctx = decodeURIComponent(contextName);
   const { data: forwards, isLoading } = usePortForwards(ctx);
   const stopMutation = useStopPortForward(ctx);
+  const { addToast } = useToast();
+  const openFailed = (description: string) =>
+    addToast({ title: "Could not open the link", description, variant: "destructive" });
 
   return (
     <div className="space-y-4">
@@ -73,6 +78,10 @@ export default function PortForwardsPage() {
                           href={`http://localhost:${f.localPort}`}
                           target="_blank"
                           rel="noopener noreferrer"
+                          onClick={externalLinkHandler(
+                            `http://localhost:${f.localPort}`,
+                            openFailed
+                          )}
                           className="inline-flex items-center gap-1 font-mono text-primary hover:underline"
                         >
                           {f.localPort}

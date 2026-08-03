@@ -76,6 +76,11 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        // Without this the webview has no way to hand a URL to the OS:
+        // `target="_blank"` and `window.open` are both swallowed, so every
+        // external link in the app silently did nothing in the desktop build
+        // while working fine under `npm run dev`.
+        .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             if cfg!(debug_assertions) {
                 app.handle().plugin(

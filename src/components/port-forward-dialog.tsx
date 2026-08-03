@@ -6,6 +6,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useStartPortForward } from "@/hooks/use-port-forward";
 import { useToast } from "@/components/ui/toast";
+import { openExternal } from "@/lib/open-external";
+import { errorText } from "@/lib/folder-picker";
 
 interface PortForwardDialogProps {
   open: boolean;
@@ -51,7 +53,16 @@ export function PortForwardDialog({
         variant: "success",
       });
       onOpenChange(false);
-      window.open(`http://localhost:${port}`, "_blank", "noopener,noreferrer");
+      // The forward is already up, so failing to open a browser is a footnote,
+      // not a failure of the action the user asked for — hence `info` rather
+      // than `destructive`, and the URL repeated so it can still be reached.
+      openExternal(`http://localhost:${port}`).catch((e) =>
+        addToast({
+          title: "Port forward is running",
+          description: `Could not open a browser (${errorText(e)}). Visit http://localhost:${port} yourself.`,
+          variant: "info",
+        })
+      );
     } catch (err) {
       addToast({
         title: "Port forward failed",
