@@ -2,7 +2,22 @@
 
 All notable changes to KlustrEye are documented here. Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
-## [1.0.0-rc.1] — Unreleased
+## [1.0.0-rc.2] — 2026-08-03
+
+Three gaps found by using rc.1 as a daily driver.
+
+### Added
+
+- **New file / New folder** in the Explorer, from a toolbar or a right-click on any node (right-clicking a file creates alongside it, not inside it), with inline naming. Nested names such as `src/lib/util.ts` create the intermediate directories. Backed by a new confined `POST /api/workspaces/:ws_id/directory`, which reports an existing path as a conflict rather than silently adopting it.
+- **Shift+Enter for a new line** in the agent composer, which is now a multi-line box that grows with its content. A multi-line message is delivered through xterm's bracketed-paste-aware `paste()`, so it arrives as one message instead of one submission per line.
+
+### Fixed
+
+- Every external link doing nothing in the desktop build: a Tauri webview cannot hand a URL to the OS without an opener plugin, so `target="_blank"` and `window.open` were both swallowed. Affected the footer links and all three port-forward "open in browser" links, and only reproduced in the packaged app — never under `npm run dev`.
+- The Explorer having no way to create anything. The backend could already create files (`write_file` with no `baseModifiedMs`); the tree simply had no toolbar and no context menu, so a workspace looked read-only.
+- `package.json` and `src-tauri/tauri.conf.json` still reporting `0.7.0-rc.2`, so the in-app footer showed a version the build had never been.
+
+## [1.0.0-rc.1] — 2026-07-30
 
 The largest release to date: KlustrEye grows from a Kubernetes-only IDE into a unified tool for clusters, code, and AI coding agents, built around a new **Workspace** concept.
 
@@ -45,13 +60,6 @@ The largest release to date: KlustrEye grows from a Kubernetes-only IDE into a u
 - The native folder picker failing silently, then reporting `undefined` — traced to the Tauri capability not covering the app's actual `http://localhost` origin (affecting every Tauri plugin, not only the dialog) and to `.message` being read off a plain string, which Tauri's IPC throws instead of an `Error`.
 - Terminal search (`Cmd/Ctrl+F`) crashing the entire agent session pane — `@xterm/addon-search` needs `allowProposedApi`.
 - The RC build failing with an out-of-memory error once Monaco was bundled instead of CDN-loaded.
-- Every external link doing nothing in the desktop build: a Tauri webview cannot hand a URL to the OS without an opener plugin, so `target="_blank"` and `window.open` were both swallowed. Affected the footer links and all three port-forward "open in browser" links, and only reproduced in the packaged app — never under `npm run dev`.
-- The Explorer having no way to create anything. The backend could already create files (`write_file` with no `baseModifiedMs`); the tree simply had no toolbar and no context menu, so a workspace looked read-only.
-
-### Added — Explorer
-
-- **New file / New folder** in the Explorer, from a toolbar or a right-click on any node (right-clicking a file creates alongside it, not inside it), with inline naming. Nested names such as `src/lib/util.ts` create the intermediate directories. Backed by a new confined `POST /api/workspaces/:ws_id/directory`, which reports an existing path as a conflict rather than silently adopting it.
-- **Shift+Enter for a new line** in the agent composer, which is now a multi-line box that grows with its content. A multi-line message is delivered through xterm's bracketed-paste-aware `paste()`, so it arrives as one message instead of one submission per line.
 
 ### Documentation
 
